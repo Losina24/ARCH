@@ -1,0 +1,25 @@
+{
+  "name": "@arch/tl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@arch/claude-runtime": "workspace:*",
+    "@arch/core": "workspace:*",
+    "@arch/schemas": "workspace:*",
+    "@arch/validator": "workspace:*"
+  },
+  "devDependencies": {
+    "execa": "^9.5.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

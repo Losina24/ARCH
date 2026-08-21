@@ -1,0 +1,11 @@
+{
+  "models": {
+    "architectModel": "claude-opus-5",
+    "tlModel": "claude-sonnet-5",
+    "workerModel": "claude-sonnet-5"
+  },
+  "execution": {
+    "maxConcurrency": 4,
+    "maxRetries": 3
+  }
+}

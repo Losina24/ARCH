@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.turbo/
+*.log
+.DS_Store
+
+# runtime state de las ejecuciones (daemon, runs, sockets) — nunca se versiona
+.arch/
