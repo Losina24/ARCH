@@ -1,5 +1,5 @@
-import type { ArchClient } from '@arch/daemon-client';
-import type { AgentMeshConfig, RunMeta } from '@arch/schemas';
+import type { ArchClient } from '@losina/daemon-client';
+import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
 import { Box, Text, useInput } from 'ink';
 import { useEffect, useState } from 'react';
 import { matchHomeCommands, parseHomeInput } from '../commands.js';

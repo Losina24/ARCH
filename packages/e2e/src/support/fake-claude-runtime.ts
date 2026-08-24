@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import type { RunHeadlessOptions, RunHeadlessResult } from '@arch/claude-runtime';
-import { getArchPaths } from '@arch/config';
-import type { CheckDefinition } from '@arch/schemas';
+import type { RunHeadlessOptions, RunHeadlessResult } from '@losina/claude-runtime';
+import { getArchPaths } from '@losina/config';
+import type { CheckDefinition } from '@losina/schemas';
 import { stringify } from 'yaml';
 
 export interface PlanTaskSpec {

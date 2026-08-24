@@ -1,5 +1,5 @@
-import type { AgentActivityEvent, ArchMeshEvent } from '@arch/ipc';
-import type { RunPlan } from '@arch/schemas';
+import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
+import type { RunPlan } from '@losina/schemas';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { ExecutionPanel } from './execution-panel.js';

@@ -1,10 +1,22 @@
 {
-  "name": "@arch/daemon",
+  "name": "@losina/daemon",
   "version": "0.1.0",
-  "private": true,
+  "description": "ARCH orchestrator daemon: definition/implementation phases, task lifecycle, persistence.",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Losina24/ARCH.git",
+    "directory": "packages/daemon"
+  },
+  "homepage": "https://github.com/Losina24/ARCH#readme",
+  "bugs": "https://github.com/Losina24/ARCH/issues",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
@@ -12,14 +24,14 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@arch/architect": "workspace:*",
-    "@arch/claude-runtime": "workspace:*",
-    "@arch/config": "workspace:*",
-    "@arch/core": "workspace:*",
-    "@arch/ipc": "workspace:*",
-    "@arch/schemas": "workspace:*",
-    "@arch/tl": "workspace:*",
-    "@arch/validator": "workspace:*"
+    "@losina/architect": "workspace:*",
+    "@losina/claude-runtime": "workspace:*",
+    "@losina/config": "workspace:*",
+    "@losina/core": "workspace:*",
+    "@losina/ipc": "workspace:*",
+    "@losina/schemas": "workspace:*",
+    "@losina/tl": "workspace:*",
+    "@losina/validator": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

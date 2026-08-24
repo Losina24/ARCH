@@ -1,13 +1,13 @@
-import { reviewTask } from '@arch/architect';
+import { reviewTask } from '@losina/architect';
 import {
   type RunEventBus,
   loadReviewRequest,
   loadRunSessions,
   saveRunSessions,
   writeReviewResponse,
-} from '@arch/core';
-import type { ReviewRequestedEvent } from '@arch/ipc';
-import type { AgentMeshConfig, RunMeta } from '@arch/schemas';
+} from '@losina/core';
+import type { ReviewRequestedEvent } from '@losina/ipc';
+import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
 import { RunAbortedError } from './run-aborted-error.js';
 
 export interface ArchitectLoopParams {

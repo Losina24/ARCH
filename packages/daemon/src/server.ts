@@ -1,6 +1,6 @@
 import { unlink } from 'node:fs/promises';
 import { type Socket, createServer } from 'node:net';
-import type { ArchMeshEvent } from '@arch/ipc';
+import type { ArchMeshEvent } from '@losina/ipc';
 
 export type RequestHandler = (method: string, payload: unknown) => Promise<unknown>;
 

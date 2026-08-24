@@ -1,12 +1,12 @@
-import { getArchPaths } from '@arch/config';
-import { isDaemonAlive, spawnDaemonDetached } from '@arch/daemon';
+import { getArchPaths } from '@losina/config';
+import { isDaemonAlive, spawnDaemonDetached } from '@losina/daemon';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArchClient } from './arch-client.js';
 import { ensureDaemon } from './ensure-daemon.js';
 
 vi.mock('node:timers/promises', () => ({ setTimeout: vi.fn(() => Promise.resolve()) }));
-vi.mock('@arch/config', () => ({ getArchPaths: vi.fn() }));
-vi.mock('@arch/daemon', () => ({
+vi.mock('@losina/config', () => ({ getArchPaths: vi.fn() }));
+vi.mock('@losina/daemon', () => ({
   DAEMON_BIN_PATH: '/fake/bin.js',
   isDaemonAlive: vi.fn(),
   spawnDaemonDetached: vi.fn(),

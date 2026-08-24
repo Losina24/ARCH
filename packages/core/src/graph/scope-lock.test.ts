@@ -1,4 +1,4 @@
-import type { Task } from '@arch/schemas';
+import type { Task } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
 import { scopesConflict, selectDispatchableTaskIds } from './scope-lock.js';
 

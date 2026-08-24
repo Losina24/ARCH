@@ -1,4 +1,4 @@
-import type { RunPhase, TaskStatus } from '@arch/schemas';
+import type { RunPhase, TaskStatus } from '@losina/schemas';
 
 export type AgentRole = 'architect' | 'tl' | 'worker';
 

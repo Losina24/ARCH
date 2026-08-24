@@ -1,4 +1,4 @@
-import type { Task, TaskStatus } from '@arch/schemas';
+import type { Task, TaskStatus } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
 import { getReadyTaskIds } from './ready-tasks.js';
 

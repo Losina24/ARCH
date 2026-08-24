@@ -1,4 +1,4 @@
-import type { ArchMeshEvent } from '@arch/ipc';
+import type { ArchMeshEvent } from '@losina/ipc';
 import { describe, expect, it, vi } from 'vitest';
 import { RunEventBus } from './event-bus.js';
 

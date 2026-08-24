@@ -1,12 +1,12 @@
-import type { ArchClient } from '@arch/daemon-client';
-import { ensureDaemon } from '@arch/daemon-client';
-import type { RunMeta } from '@arch/schemas';
+import type { ArchClient } from '@losina/daemon-client';
+import { ensureDaemon } from '@losina/daemon-client';
+import type { RunMeta } from '@losina/schemas';
 import type { Stdin } from 'ink-testing-library';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './app.js';
 
-vi.mock('@arch/daemon-client', () => ({ ensureDaemon: vi.fn() }));
+vi.mock('@losina/daemon-client', () => ({ ensureDaemon: vi.fn() }));
 
 const mockedEnsureDaemon = vi.mocked(ensureDaemon);
 

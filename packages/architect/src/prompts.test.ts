@@ -1,4 +1,4 @@
-import type { RunMeta } from '@arch/schemas';
+import type { RunMeta } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
 import { buildPlanPrompt, buildRefinePlanPrompt, buildReviewPrompt } from './prompts.js';
 

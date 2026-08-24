@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { getArchPaths } from '@arch/config';
-import { DAEMON_BIN_PATH, isDaemonAlive, spawnDaemonDetached } from '@arch/daemon';
+import { getArchPaths } from '@losina/config';
+import { DAEMON_BIN_PATH, isDaemonAlive, spawnDaemonDetached } from '@losina/daemon';
 import { ArchClient } from './arch-client.js';
 
 const SPAWN_RETRY_ATTEMPTS = 100;

@@ -1,4 +1,4 @@
-import type { AgentActivityEvent, AgentRole, ArchMeshEvent } from '@arch/ipc';
+import type { AgentActivityEvent, AgentRole, ArchMeshEvent } from '@losina/ipc';
 import { neonGradientColor } from './neon-gradient.js';
 
 const TERMINAL_TASK_STATUSES = new Set(['done', 'failed', 'awaiting_human']);

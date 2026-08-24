@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentMeshConfig } from '@arch/schemas';
+import type { AgentMeshConfig } from '@losina/schemas';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getArchPaths } from './arch-paths.js';
 import { DEFAULT_CONFIG } from './default-config.js';

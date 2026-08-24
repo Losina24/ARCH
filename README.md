@@ -45,7 +45,7 @@ or resumed at any time, even after the daemon restarts.
 | **Team Lead (TL)** | Coordinates a single task's execution: dispatches the Worker, then runs the task's automated checks against the Worker's changes and reports pass/fail back to the daemon. |
 | **Worker** | Implements one task inside its own git worktree, on its own branch, with a resumable Claude session so correction feedback can be applied incrementally. |
 
-Architect and Worker calls go through `runClaudeHeadless` (`@arch/claude-runtime`) — the single
+Architect and Worker calls go through `runClaudeHeadless` (`@losina/claude-runtime`) — the single
 integration point with the `claude` CLI, invoked with `--print`/headless flags and (when
 available) `--resume` for the agent's existing session. Only one Architect review runs at a time
 per run (protected by an in-process mutex), while multiple Workers can run concurrently, each in
@@ -98,7 +98,18 @@ invocations reuse that same instance as long as the socket is alive.
 There are two ways to install ARCH, depending on whether you just want to use it or you want to
 work on it.
 
-### For end users — one-line install
+### Via npm
+
+```bash
+npm install -g @losina/cli @losina/tui
+```
+
+This installs the `archctl` and `arch-terminal` executables directly from the npm registry — no
+cloning or building required. It only needs Node.js ≥ 20 on your `PATH` (see
+[Requirements](#requirements) above). Upgrade with the same command, or
+`npm update -g @losina/cli @losina/tui`.
+
+### One-line install script
 
 macOS / Linux:
 
@@ -143,10 +154,10 @@ pnpm link:global
 ```
 
 `pnpm link` doesn't support `--filter` (which forces pnpm's recursive/workspace mode), so `pnpm
---filter @arch/cli link --global` is out. `pnpm --dir`/`-C` doesn't work either — inside a pnpm
+--filter @losina/cli link --global` is out. `pnpm --dir`/`-C` doesn't work either — inside a pnpm
 workspace it still resolves the *workspace root* package instead of the one at that path, so it
 ends up linking the private root package (which has no `bin` entries) instead of
-`@arch/cli`/`@arch/tui`. `link:global` works around this by actually changing directory into each
+`@losina/cli`/`@losina/tui`. `link:global` works around this by actually changing directory into each
 package before linking it — see the `link:global` script in [`package.json`](package.json) if you
 need to run the two steps separately.
 
@@ -260,8 +271,8 @@ other commands.
 To iterate on a single package:
 
 ```bash
-pnpm --filter @arch/daemon dev    # tsc --watch
-pnpm --filter @arch/daemon test
+pnpm --filter @losina/daemon dev    # tsc --watch
+pnpm --filter @losina/daemon test
 ```
 
 ### Testing strategy
@@ -271,9 +282,9 @@ pnpm --filter @arch/daemon test
 - **End-to-end tests** (`packages/e2e`) start a real daemon in-process, talk to it over a real
   Unix socket, and operate on a real temporary git repository — including real worktrees, commits,
   and merges. The only thing they mock is the boundary with the `claude` CLI
-  (`@arch/claude-runtime`), so the full orchestration logic (task graph, retries, cascade-fail,
+  (`@losina/claude-runtime`), so the full orchestration logic (task graph, retries, cascade-fail,
   abort) is exercised for real without depending on live model calls.
 
 ## License
 
-No license has been declared for this project yet.
+[MIT](LICENSE)

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { connect } from 'node:net';
 import { join } from 'node:path';
-import { getArchPaths } from '@arch/config';
+import { getArchPaths } from '@losina/config';
 
 export async function isDaemonAlive(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {

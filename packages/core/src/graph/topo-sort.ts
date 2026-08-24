@@ -1,4 +1,4 @@
-import type { Task } from '@arch/schemas';
+import type { Task } from '@losina/schemas';
 
 export class CyclicDependencyError extends Error {
   constructor(remainingIds: string[]) {

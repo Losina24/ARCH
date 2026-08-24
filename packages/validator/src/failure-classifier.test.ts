@@ -1,4 +1,4 @@
-import type { ValidationResult } from '@arch/schemas';
+import type { ValidationResult } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
 import { isHumanInterventionNeeded, isInfraFailure } from './failure-classifier.js';
 

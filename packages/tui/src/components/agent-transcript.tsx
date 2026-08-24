@@ -3,7 +3,7 @@ import type {
   AgentRole,
   ArchMeshEvent,
   TaskStatusChangedEvent,
-} from '@arch/ipc';
+} from '@losina/ipc';
 import { Box, Text } from 'ink';
 import { formatTime, taskStatusLogText, taskStatusLogTone } from '../activity-log.js';
 import { agentRoleColor } from '../agent-status.js';

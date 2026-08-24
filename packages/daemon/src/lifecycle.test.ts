@@ -3,7 +3,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { getArchPaths } from '@arch/config';
+import { getArchPaths } from '@losina/config';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isDaemonAlive, spawnDaemonDetached } from './lifecycle.js';
 

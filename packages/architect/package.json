@@ -1,10 +1,22 @@
 {
-  "name": "@arch/architect",
+  "name": "@losina/architect",
   "version": "0.1.0",
-  "private": true,
+  "description": "Architect agent for ARCH: turns a prompt into a plan and reviews task diffs.",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Losina24/ARCH.git",
+    "directory": "packages/architect"
+  },
+  "homepage": "https://github.com/Losina24/ARCH#readme",
+  "bugs": "https://github.com/Losina24/ARCH/issues",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
@@ -12,10 +24,10 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@arch/claude-runtime": "workspace:*",
-    "@arch/config": "workspace:*",
-    "@arch/core": "workspace:*",
-    "@arch/schemas": "workspace:*"
+    "@losina/claude-runtime": "workspace:*",
+    "@losina/config": "workspace:*",
+    "@losina/core": "workspace:*",
+    "@losina/schemas": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

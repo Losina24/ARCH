@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { type RunSessions, RunSessionsSchema } from '@arch/schemas';
+import { type RunSessions, RunSessionsSchema } from '@losina/schemas';
 
 const SESSIONS_FILENAME = 'sessions.json';
 

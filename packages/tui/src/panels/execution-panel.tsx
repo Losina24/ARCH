@@ -1,5 +1,5 @@
-import type { AgentActivityEvent, ArchMeshEvent } from '@arch/ipc';
-import type { RunPlan } from '@arch/schemas';
+import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
+import type { RunPlan } from '@losina/schemas';
 import { Box, Text } from 'ink';
 import { buildActivityLog } from '../activity-log.js';
 import { agentRoleColor, buildAgentLabels, deriveAgentStatuses } from '../agent-status.js';

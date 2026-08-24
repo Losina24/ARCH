@@ -5,7 +5,7 @@ import {
   ReviewRequestSchema,
   type ReviewResponse,
   ReviewResponseSchema,
-} from '@arch/schemas';
+} from '@losina/schemas';
 import { parse, stringify } from 'yaml';
 
 function mailboxDir(runDir: string): string {

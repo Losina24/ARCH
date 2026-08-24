@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { type TasksIndex, TasksIndexSchema } from '@arch/schemas';
+import { type TasksIndex, TasksIndexSchema } from '@losina/schemas';
 import { parse, stringify } from 'yaml';
 
 export async function loadTasksIndex(path: string): Promise<TasksIndex> {

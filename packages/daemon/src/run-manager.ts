@@ -1,4 +1,4 @@
-import type { RunMeta } from '@arch/schemas';
+import type { RunMeta } from '@losina/schemas';
 
 export interface QueuedRetry {
   taskId: string;

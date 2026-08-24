@@ -1,4 +1,4 @@
-import type { Task } from '@arch/schemas';
+import type { Task } from '@losina/schemas';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { TaskLine } from './task-line.js';

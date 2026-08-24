@@ -1,6 +1,6 @@
-import { runClaudeHeadless } from '@arch/claude-runtime';
-import { type WorktreeHandle, getStagedFiles, stageAll } from '@arch/core';
-import type { Task } from '@arch/schemas';
+import { runClaudeHeadless } from '@losina/claude-runtime';
+import { type WorktreeHandle, getStagedFiles, stageAll } from '@losina/core';
+import type { Task } from '@losina/schemas';
 import { type CorrectionSource, buildWorkerPrompt } from './prompts.js';
 
 export interface DispatchWorkerInput {

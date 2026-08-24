@@ -1,8 +1,8 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ArchMeshEvent } from '@arch/ipc';
-import type { RunMeta } from '@arch/schemas';
+import type { ArchMeshEvent } from '@losina/ipc';
+import type { RunMeta } from '@losina/schemas';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   appendRunEvent,

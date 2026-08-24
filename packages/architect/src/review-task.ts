@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { runClaudeHeadless } from '@arch/claude-runtime';
-import type { RunMeta } from '@arch/schemas';
+import { runClaudeHeadless } from '@losina/claude-runtime';
+import type { RunMeta } from '@losina/schemas';
 import { buildReviewPrompt } from './prompts.js';
 import { fileExists } from './util/file-exists.js';
 

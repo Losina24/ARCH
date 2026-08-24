@@ -1,4 +1,4 @@
-import type { ArchMeshEvent } from '@arch/ipc';
+import type { ArchMeshEvent } from '@losina/ipc';
 import { Box, Text } from 'ink';
 import { agentRoleColor, deriveAgentStatuses, workerSlotGroup } from '../agent-status.js';
 import { AgentTranscript } from '../components/agent-transcript.js';

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { getArchPaths } from '@arch/config';
-import { isDaemonAlive } from '@arch/daemon';
-import { withClient } from '@arch/daemon-client';
+import { getArchPaths } from '@losina/config';
+import { isDaemonAlive } from '@losina/daemon';
+import { withClient } from '@losina/daemon-client';
 import { Command } from 'commander';
 
 interface CwdOption {

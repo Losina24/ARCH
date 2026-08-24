@@ -1,5 +1,5 @@
-import { type RunEventBus, loadReviewResponse } from '@arch/core';
-import type { ArchMeshEvent } from '@arch/ipc';
+import { type RunEventBus, loadReviewResponse } from '@losina/core';
+import type { ArchMeshEvent } from '@losina/ipc';
 import { RunAbortedError } from './run-aborted-error.js';
 
 export interface WaitForReviewOutcomeParams {

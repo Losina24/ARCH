@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { ClaudeApiRejectionError, ClaudeStreamAbortedError } from '@arch/claude-runtime';
+import { ClaudeApiRejectionError, ClaudeStreamAbortedError } from '@losina/claude-runtime';
 import {
   type RunEventBus,
   commitAll,
@@ -21,15 +21,19 @@ import {
   stagePaths,
   workerAgentId,
   writeReviewRequest,
-} from '@arch/core';
-import type { AgentMeshConfig, RunMeta, RunSessions, Task, TasksIndex } from '@arch/schemas';
+} from '@losina/core';
+import type { AgentMeshConfig, RunMeta, RunSessions, Task, TasksIndex } from '@losina/schemas';
 import {
   type CorrectionSource,
   type DispatchWorkerInput,
   dispatchWorker,
   processWorkerReport,
-} from '@arch/tl';
-import { buildCorrectionPrompt, isHumanInterventionNeeded, isInfraFailure } from '@arch/validator';
+} from '@losina/tl';
+import {
+  buildCorrectionPrompt,
+  isHumanInterventionNeeded,
+  isInfraFailure,
+} from '@losina/validator';
 import type { Mutex } from './mutex.js';
 import { RunAbortedError } from './run-aborted-error.js';
 import { waitForReviewOutcome } from './wait-for-review-outcome.js';

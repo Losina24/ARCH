@@ -1,5 +1,5 @@
-import type { ArchMeshEvent } from '@arch/ipc';
-import type { Task } from '@arch/schemas';
+import type { ArchMeshEvent } from '@losina/ipc';
+import type { Task } from '@losina/schemas';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { TaskDetailPanel } from './task-detail-panel.js';

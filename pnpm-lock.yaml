@@ -23,16 +23,16 @@ importers:
 
   packages/architect:
     dependencies:
-      '@arch/claude-runtime':
+      '@losina/claude-runtime':
         specifier: workspace:*
         version: link:../claude-runtime
-      '@arch/config':
+      '@losina/config':
         specifier: workspace:*
         version: link:../config
-      '@arch/core':
+      '@losina/core':
         specifier: workspace:*
         version: link:../core
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
     devDependencies:
@@ -45,7 +45,7 @@ importers:
 
   packages/claude-runtime:
     dependencies:
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
       execa:
@@ -61,13 +61,13 @@ importers:
 
   packages/cli:
     dependencies:
-      '@arch/config':
+      '@losina/config':
         specifier: workspace:*
         version: link:../config
-      '@arch/daemon':
+      '@losina/daemon':
         specifier: workspace:*
         version: link:../daemon
-      '@arch/daemon-client':
+      '@losina/daemon-client':
         specifier: workspace:*
         version: link:../daemon-client
       commander:
@@ -83,7 +83,7 @@ importers:
 
   packages/config:
     dependencies:
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
     devDependencies:
@@ -96,10 +96,10 @@ importers:
 
   packages/core:
     dependencies:
-      '@arch/ipc':
+      '@losina/ipc':
         specifier: workspace:*
         version: link:../ipc
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
       execa:
@@ -118,28 +118,28 @@ importers:
 
   packages/daemon:
     dependencies:
-      '@arch/architect':
+      '@losina/architect':
         specifier: workspace:*
         version: link:../architect
-      '@arch/claude-runtime':
+      '@losina/claude-runtime':
         specifier: workspace:*
         version: link:../claude-runtime
-      '@arch/config':
+      '@losina/config':
         specifier: workspace:*
         version: link:../config
-      '@arch/core':
+      '@losina/core':
         specifier: workspace:*
         version: link:../core
-      '@arch/ipc':
+      '@losina/ipc':
         specifier: workspace:*
         version: link:../ipc
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
-      '@arch/tl':
+      '@losina/tl':
         specifier: workspace:*
         version: link:../tl
-      '@arch/validator':
+      '@losina/validator':
         specifier: workspace:*
         version: link:../validator
     devDependencies:
@@ -152,16 +152,16 @@ importers:
 
   packages/daemon-client:
     dependencies:
-      '@arch/config':
+      '@losina/config':
         specifier: workspace:*
         version: link:../config
-      '@arch/daemon':
+      '@losina/daemon':
         specifier: workspace:*
         version: link:../daemon
-      '@arch/ipc':
+      '@losina/ipc':
         specifier: workspace:*
         version: link:../ipc
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
     devDependencies:
@@ -174,22 +174,22 @@ importers:
 
   packages/e2e:
     dependencies:
-      '@arch/claude-runtime':
+      '@losina/claude-runtime':
         specifier: workspace:*
         version: link:../claude-runtime
-      '@arch/config':
+      '@losina/config':
         specifier: workspace:*
         version: link:../config
-      '@arch/daemon':
+      '@losina/daemon':
         specifier: workspace:*
         version: link:../daemon
-      '@arch/daemon-client':
+      '@losina/daemon-client':
         specifier: workspace:*
         version: link:../daemon-client
-      '@arch/ipc':
+      '@losina/ipc':
         specifier: workspace:*
         version: link:../ipc
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
       execa:
@@ -208,7 +208,7 @@ importers:
 
   packages/ipc:
     dependencies:
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
       zod:
@@ -237,16 +237,16 @@ importers:
 
   packages/tl:
     dependencies:
-      '@arch/claude-runtime':
+      '@losina/claude-runtime':
         specifier: workspace:*
         version: link:../claude-runtime
-      '@arch/core':
+      '@losina/core':
         specifier: workspace:*
         version: link:../core
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
-      '@arch/validator':
+      '@losina/validator':
         specifier: workspace:*
         version: link:../validator
     devDependencies:
@@ -262,19 +262,19 @@ importers:
 
   packages/tui:
     dependencies:
-      '@arch/config':
+      '@losina/config':
         specifier: workspace:*
         version: link:../config
-      '@arch/core':
+      '@losina/core':
         specifier: workspace:*
         version: link:../core
-      '@arch/daemon-client':
+      '@losina/daemon-client':
         specifier: workspace:*
         version: link:../daemon-client
-      '@arch/ipc':
+      '@losina/ipc':
         specifier: workspace:*
         version: link:../ipc
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
       ink:
@@ -305,7 +305,7 @@ importers:
 
   packages/validator:
     dependencies:
-      '@arch/schemas':
+      '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
       execa:

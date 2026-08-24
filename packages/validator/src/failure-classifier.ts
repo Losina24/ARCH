@@ -1,4 +1,4 @@
-import type { ValidationResult } from '@arch/schemas';
+import type { ValidationResult } from '@losina/schemas';
 
 // Signatures of environment/network failures a Worker cannot fix by changing code — DNS
 // resolution, unreachable registries/hosts, connection timeouts. Deliberately conservative:

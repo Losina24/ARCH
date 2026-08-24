@@ -1,4 +1,4 @@
-import type { AgentMeshConfig } from '@arch/schemas';
+import type { AgentMeshConfig } from '@losina/schemas';
 import { Text } from 'ink';
 import { dimHex, neonGradientColor } from '../neon-gradient.js';
 

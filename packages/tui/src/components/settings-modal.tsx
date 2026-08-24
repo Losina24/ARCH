@@ -1,4 +1,4 @@
-import type { ArchClient } from '@arch/daemon-client';
+import type { ArchClient } from '@losina/daemon-client';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { useEffect, useState } from 'react';

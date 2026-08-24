@@ -1,5 +1,5 @@
-import type { CheckDefinition, ValidationResult } from '@arch/schemas';
-import { runChecks } from '@arch/validator';
+import type { CheckDefinition, ValidationResult } from '@losina/schemas';
+import { runChecks } from '@losina/validator';
 
 export interface ProcessWorkerReportInput {
   taskId: string;

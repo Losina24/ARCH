@@ -1,4 +1,4 @@
-import type { ModelConfig } from '@arch/schemas';
+import type { ModelConfig } from '@losina/schemas';
 
 export interface RunCreateRequest {
   prompt: string;

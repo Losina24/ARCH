@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { runClaudeHeadless } from '@arch/claude-runtime';
-import { getArchPaths } from '@arch/config';
-import { loadTasksIndex } from '@arch/core';
-import type { RunMeta, RunPlan } from '@arch/schemas';
+import { runClaudeHeadless } from '@losina/claude-runtime';
+import { getArchPaths } from '@losina/config';
+import { loadTasksIndex } from '@losina/core';
+import type { RunMeta, RunPlan } from '@losina/schemas';
 import { buildPlanPrompt, buildRefinePlanPrompt } from './prompts.js';
 
 export interface PlanProjectInput {

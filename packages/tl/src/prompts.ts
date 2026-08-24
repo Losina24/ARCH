@@ -1,4 +1,4 @@
-import type { CheckDefinition } from '@arch/schemas';
+import type { CheckDefinition } from '@losina/schemas';
 
 /**
  * Who's actually behind a correction round, so the Worker prompt attributes it accurately:

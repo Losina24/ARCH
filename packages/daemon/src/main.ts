@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { getArchPaths, loadConfig, saveConfig } from '@arch/config';
-import { loadTasksIndex, saveTasksIndex, workerAgentId } from '@arch/core';
+import { getArchPaths, loadConfig, saveConfig } from '@losina/config';
+import { loadTasksIndex, saveTasksIndex, workerAgentId } from '@losina/core';
 import type {
   ArchMeshEvent,
   ConfigSetRequest,
@@ -16,8 +16,8 @@ import type {
   RunGetTaskFileRequest,
   RunRefineRequest,
   RunRetryTaskRequest,
-} from '@arch/ipc';
-import type { AgentMeshConfig, RunMeta, RunPlan } from '@arch/schemas';
+} from '@losina/ipc';
+import type { AgentMeshConfig, RunMeta, RunPlan } from '@losina/schemas';
 import { runDefinitionPhase } from './orchestrator/definition-phase.js';
 import { runImplementationPhase } from './orchestrator/implementation-phase.js';
 import {

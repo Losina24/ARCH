@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { ArchMeshEvent } from '@arch/ipc';
+import type { ArchMeshEvent } from '@losina/ipc';
 
 export class RunEventBus {
   private readonly emitter = new EventEmitter();

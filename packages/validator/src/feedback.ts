@@ -1,4 +1,4 @@
-import type { ValidationResult } from '@arch/schemas';
+import type { ValidationResult } from '@losina/schemas';
 
 export function buildCorrectionPrompt(result: ValidationResult): string {
   const failed = result.checks.filter((check) => !check.passed);

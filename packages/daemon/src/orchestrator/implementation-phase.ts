@@ -7,9 +7,9 @@ import {
   loadTasksIndex,
   saveTasksIndex,
   selectDispatchableTaskIds,
-} from '@arch/core';
-import type { AgentActivityState } from '@arch/ipc';
-import type { AgentMeshConfig, Task } from '@arch/schemas';
+} from '@losina/core';
+import type { AgentActivityState } from '@losina/ipc';
+import type { AgentMeshConfig, Task } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import type { DaemonServerHandle } from '../server.js';
 import { createActivityDeduper } from './activity-dedupe.js';

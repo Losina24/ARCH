@@ -1,4 +1,4 @@
-import type { Task } from '@arch/schemas';
+import type { Task } from '@losina/schemas';
 
 function normalize(path: string): string {
   return path.replace(/\/+$/, '');

@@ -1,5 +1,5 @@
-import type { ArchClient } from '@arch/daemon-client';
-import type { RunMeta } from '@arch/schemas';
+import type { ArchClient } from '@losina/daemon-client';
+import type { RunMeta } from '@losina/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { exitApp } from './exit-app.js';
 

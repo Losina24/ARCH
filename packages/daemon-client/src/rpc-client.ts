@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { type Socket, connect } from 'node:net';
-import type { ArchMeshEvent } from '@arch/ipc';
+import type { ArchMeshEvent } from '@losina/ipc';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;

@@ -1,13 +1,13 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runClaudeHeadless } from '@arch/claude-runtime';
-import { getArchPaths } from '@arch/config';
-import type { RunMeta } from '@arch/schemas';
+import { runClaudeHeadless } from '@losina/claude-runtime';
+import { getArchPaths } from '@losina/config';
+import type { RunMeta } from '@losina/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { planProject } from './plan-project.js';
 
-vi.mock('@arch/claude-runtime', () => ({ runClaudeHeadless: vi.fn() }));
+vi.mock('@losina/claude-runtime', () => ({ runClaudeHeadless: vi.fn() }));
 
 const mockedRunClaudeHeadless = vi.mocked(runClaudeHeadless);
 

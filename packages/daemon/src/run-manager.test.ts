@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import type { RunMeta } from '@arch/schemas';
+import type { RunMeta } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
 import { RunManager } from './run-manager.js';
 

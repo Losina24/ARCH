@@ -1,5 +1,5 @@
-import type { ArchMeshEvent } from '@arch/ipc';
-import type { TaskStatus } from '@arch/schemas';
+import type { ArchMeshEvent } from '@losina/ipc';
+import type { TaskStatus } from '@losina/schemas';
 
 export type ActivityLogTone = 'info' | 'success' | 'warning' | 'error' | 'waiting';
 

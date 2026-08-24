@@ -1,4 +1,4 @@
-import type { TaskStatus } from '@arch/schemas';
+import type { TaskStatus } from '@losina/schemas';
 import { ACCENT, ERROR, MUTED, REVIEW, SUCCESS, WAITING } from './theme.js';
 
 export function statusColor(status: TaskStatus): string {

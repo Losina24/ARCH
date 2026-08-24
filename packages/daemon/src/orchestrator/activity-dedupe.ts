@@ -1,4 +1,4 @@
-import type { AgentActivityState } from '@arch/ipc';
+import type { AgentActivityState } from '@losina/ipc';
 
 /**
  * Tracks the last (state, taskId) pair reported for one agent and says whether a new one is

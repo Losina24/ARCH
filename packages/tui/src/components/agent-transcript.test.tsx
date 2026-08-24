@@ -1,4 +1,4 @@
-import type { ArchMeshEvent } from '@arch/ipc';
+import type { ArchMeshEvent } from '@losina/ipc';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { AgentTranscript } from './agent-transcript.js';

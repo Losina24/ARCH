@@ -1,4 +1,4 @@
-import type { Task } from '@arch/schemas';
+import type { Task } from '@losina/schemas';
 import { Box, Text } from 'ink';
 import { statusGlyph } from '../status-color.js';
 import { taskStyle } from '../task-style.js';

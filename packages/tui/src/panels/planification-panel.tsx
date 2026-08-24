@@ -1,5 +1,5 @@
-import type { AgentActivityEvent, AgentRole } from '@arch/ipc';
-import type { AgentMeshConfig, RunMeta, RunPlan } from '@arch/schemas';
+import type { AgentActivityEvent, AgentRole } from '@losina/ipc';
+import type { AgentMeshConfig, RunMeta, RunPlan } from '@losina/schemas';
 import { Box, Text } from 'ink';
 import { agentRoleColor } from '../agent-status.js';
 import { GradientText } from '../components/gradient-text.js';

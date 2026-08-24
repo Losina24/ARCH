@@ -1,4 +1,4 @@
-import type { CheckDefinition, ValidationResult } from '@arch/schemas';
+import type { CheckDefinition, ValidationResult } from '@losina/schemas';
 import { execa } from 'execa';
 
 export async function runChecks(

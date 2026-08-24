@@ -1,4 +1,4 @@
-import type { TaskStatus } from '@arch/schemas';
+import type { TaskStatus } from '@losina/schemas';
 import { Text } from 'ink';
 import { statusColor, statusGlyph } from '../status-color.js';
 import { Spinner } from './spinner.js';

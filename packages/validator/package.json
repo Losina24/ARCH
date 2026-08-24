@@ -1,10 +1,22 @@
 {
-  "name": "@arch/validator",
+  "name": "@losina/validator",
   "version": "0.1.0",
-  "private": true,
+  "description": "Runs a task's automated checks and builds correction feedback for ARCH.",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Losina24/ARCH.git",
+    "directory": "packages/validator"
+  },
+  "homepage": "https://github.com/Losina24/ARCH#readme",
+  "bugs": "https://github.com/Losina24/ARCH/issues",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
@@ -12,7 +24,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@arch/schemas": "workspace:*",
+    "@losina/schemas": "workspace:*",
     "execa": "^9.5.1"
   },
   "devDependencies": {

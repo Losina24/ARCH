@@ -1,5 +1,5 @@
-import { type ArchClient, ensureDaemon } from '@arch/daemon-client';
-import type { RunMeta } from '@arch/schemas';
+import { type ArchClient, ensureDaemon } from '@losina/daemon-client';
+import type { RunMeta } from '@losina/schemas';
 import { Text, useStdout } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import { exitApp } from './lib/exit-app.js';

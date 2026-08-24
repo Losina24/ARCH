@@ -1,5 +1,5 @@
-import type { ArchClient } from '@arch/daemon-client';
-import type { AgentMeshConfig, RunMeta } from '@arch/schemas';
+import type { ArchClient } from '@losina/daemon-client';
+import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
 import type { Stdin } from 'ink-testing-library';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';

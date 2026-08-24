@@ -1,7 +1,7 @@
 import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { RunHeadlessOptions, RunHeadlessResult } from '@arch/claude-runtime';
-import { getArchPaths } from '@arch/config';
+import type { RunHeadlessOptions, RunHeadlessResult } from '@losina/claude-runtime';
+import { getArchPaths } from '@losina/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DaemonHarness, startDaemonHarness } from './support/daemon-harness.js';
 import { FakeClaudeRuntime } from './support/fake-claude-runtime.js';
@@ -10,8 +10,8 @@ import { waitForEvent } from './support/wait-for-event.js';
 
 let runtime: FakeClaudeRuntime | undefined;
 
-vi.mock('@arch/claude-runtime', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@arch/claude-runtime')>();
+vi.mock('@losina/claude-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@losina/claude-runtime')>();
   return {
     ...actual,
     runClaudeHeadless: (options: RunHeadlessOptions): Promise<RunHeadlessResult> => {

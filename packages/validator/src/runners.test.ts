@@ -1,4 +1,4 @@
-import type { CheckDefinition } from '@arch/schemas';
+import type { CheckDefinition } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
 import { runChecks } from './runners.js';
 

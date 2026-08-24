@@ -1,11 +1,26 @@
 {
-  "name": "@arch/cli",
+  "name": "@losina/cli",
   "version": "0.1.0",
-  "private": true,
+  "description": "archctl — the ARCH orchestration CLI.",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "archctl": "./dist/bin.js"
   },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Losina24/ARCH.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Losina24/ARCH#readme",
+  "bugs": "https://github.com/Losina24/ARCH/issues",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "postbuild": "chmod +x dist/bin.js",
@@ -14,9 +29,9 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@arch/config": "workspace:*",
-    "@arch/daemon": "workspace:*",
-    "@arch/daemon-client": "workspace:*",
+    "@losina/config": "workspace:*",
+    "@losina/daemon": "workspace:*",
+    "@losina/daemon-client": "workspace:*",
     "commander": "^12.1.0"
   },
   "devDependencies": {

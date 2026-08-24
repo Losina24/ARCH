@@ -14,8 +14,8 @@ import type {
   RunListRequest,
   RunRefineRequest,
   RunRetryTaskRequest,
-} from '@arch/ipc';
-import type { AgentMeshConfig, RunMeta, RunPlan } from '@arch/schemas';
+} from '@losina/ipc';
+import type { AgentMeshConfig, RunMeta, RunPlan } from '@losina/schemas';
 import { DaemonRpcClient, type EventHandler } from './rpc-client.js';
 
 export class ArchClient {

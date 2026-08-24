@@ -1,4 +1,4 @@
-import type { ArchClient } from '@arch/daemon-client';
+import type { ArchClient } from '@losina/daemon-client';
 
 export interface ExitAppOptions {
   /** Shut down the daemon unconditionally, even mid-run. */

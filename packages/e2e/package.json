@@ -1,5 +1,5 @@
 {
-  "name": "@arch/e2e",
+  "name": "@losina/e2e",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,12 +12,12 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@arch/claude-runtime": "workspace:*",
-    "@arch/config": "workspace:*",
-    "@arch/daemon": "workspace:*",
-    "@arch/daemon-client": "workspace:*",
-    "@arch/ipc": "workspace:*",
-    "@arch/schemas": "workspace:*",
+    "@losina/claude-runtime": "workspace:*",
+    "@losina/config": "workspace:*",
+    "@losina/daemon": "workspace:*",
+    "@losina/daemon-client": "workspace:*",
+    "@losina/ipc": "workspace:*",
+    "@losina/schemas": "workspace:*",
     "execa": "^9.5.1",
     "yaml": "^2.6.1"
   },

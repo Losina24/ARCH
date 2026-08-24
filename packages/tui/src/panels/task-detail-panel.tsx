@@ -1,6 +1,6 @@
-import { workerAgentId } from '@arch/core';
-import type { ArchMeshEvent } from '@arch/ipc';
-import type { Task } from '@arch/schemas';
+import { workerAgentId } from '@losina/core';
+import type { ArchMeshEvent } from '@losina/ipc';
+import type { Task } from '@losina/schemas';
 import { Box, Text } from 'ink';
 import { buildAgentLabels } from '../agent-status.js';
 import { AgentTranscript } from '../components/agent-transcript.js';

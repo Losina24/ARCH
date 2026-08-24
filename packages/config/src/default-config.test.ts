@@ -1,4 +1,4 @@
-import { AgentMeshConfigSchema } from '@arch/schemas';
+import { AgentMeshConfigSchema } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from './default-config.js';
 

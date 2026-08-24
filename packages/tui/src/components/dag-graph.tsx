@@ -1,6 +1,6 @@
-import { CyclicDependencyError, UnknownDependencyError, topologicalWaves } from '@arch/core';
-import type { AgentActivityEvent } from '@arch/ipc';
-import type { Task, TasksIndex } from '@arch/schemas';
+import { CyclicDependencyError, UnknownDependencyError, topologicalWaves } from '@losina/core';
+import type { AgentActivityEvent } from '@losina/ipc';
+import type { Task, TasksIndex } from '@losina/schemas';
 import { Box, Text } from 'ink';
 import { latestAssignedAgent } from '../agent-status.js';
 import { ACCENT, ERROR, INACTIVE } from '../theme.js';

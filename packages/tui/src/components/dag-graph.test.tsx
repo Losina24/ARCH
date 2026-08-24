@@ -1,5 +1,5 @@
-import type { AgentActivityEvent } from '@arch/ipc';
-import type { Task, TasksIndex } from '@arch/schemas';
+import type { AgentActivityEvent } from '@losina/ipc';
+import type { Task, TasksIndex } from '@losina/schemas';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { DagGraph } from './dag-graph.js';

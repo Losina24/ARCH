@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ArchMeshEvent, PersistedRunEvent } from '@arch/ipc';
-import { type RunMeta, RunMetaSchema } from '@arch/schemas';
+import type { ArchMeshEvent, PersistedRunEvent } from '@losina/ipc';
+import { type RunMeta, RunMetaSchema } from '@losina/schemas';
 
 export function getRunDir(archDir: string, runId: string): string {
   return join(archDir, 'runs', runId);

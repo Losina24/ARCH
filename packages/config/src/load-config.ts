@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type AgentMeshConfig, AgentMeshConfigSchema } from '@arch/schemas';
+import { type AgentMeshConfig, AgentMeshConfigSchema } from '@losina/schemas';
 import { getArchPaths } from './arch-paths.js';
 import { DEFAULT_CONFIG } from './default-config.js';
 

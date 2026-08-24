@@ -1,4 +1,4 @@
-import type { AgentMeshConfig } from '@arch/schemas';
+import type { AgentMeshConfig } from '@losina/schemas';
 
 export const DEFAULT_CONFIG: AgentMeshConfig = {
   models: {

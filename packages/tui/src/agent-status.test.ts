@@ -1,4 +1,4 @@
-import type { AgentActivityEvent, ArchMeshEvent } from '@arch/ipc';
+import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
 import { describe, expect, it } from 'vitest';
 import {
   agentRoleColor,

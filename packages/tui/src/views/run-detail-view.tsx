@@ -1,6 +1,6 @@
-import type { ArchClient } from '@arch/daemon-client';
-import type { AgentActivityEvent, ArchMeshEvent } from '@arch/ipc';
-import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@arch/schemas';
+import type { ArchClient } from '@losina/daemon-client';
+import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
+import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@losina/schemas';
 import { Box, Text, useInput } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import { deriveAgentStatuses } from '../agent-status.js';

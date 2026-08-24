@@ -1,4 +1,4 @@
-import type { AgentMeshConfig } from '@arch/schemas';
+import type { AgentMeshConfig } from '@losina/schemas';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { ModelsHint } from './models-hint.js';

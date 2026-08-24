@@ -1,5 +1,5 @@
-import type { ArchClient } from '@arch/daemon-client';
-import type { ArchMeshEvent } from '@arch/ipc';
+import type { ArchClient } from '@losina/daemon-client';
+import type { ArchMeshEvent } from '@losina/ipc';
 
 export function waitForEvent(
   client: ArchClient,

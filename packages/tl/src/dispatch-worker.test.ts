@@ -1,14 +1,14 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runClaudeHeadless } from '@arch/claude-runtime';
-import type { WorktreeHandle } from '@arch/core';
-import type { Task } from '@arch/schemas';
+import { runClaudeHeadless } from '@losina/claude-runtime';
+import type { WorktreeHandle } from '@losina/core';
+import type { Task } from '@losina/schemas';
 import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dispatchWorker } from './dispatch-worker.js';
 
-vi.mock('@arch/claude-runtime', () => ({ runClaudeHeadless: vi.fn() }));
+vi.mock('@losina/claude-runtime', () => ({ runClaudeHeadless: vi.fn() }));
 
 const mockedRunClaudeHeadless = vi.mocked(runClaudeHeadless);
 

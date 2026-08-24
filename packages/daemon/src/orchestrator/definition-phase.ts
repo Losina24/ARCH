@@ -1,6 +1,6 @@
-import { planProject } from '@arch/architect';
-import { loadRunSessions, saveRunSessions } from '@arch/core';
-import type { AgentMeshConfig } from '@arch/schemas';
+import { planProject } from '@losina/architect';
+import { loadRunSessions, saveRunSessions } from '@losina/core';
+import type { AgentMeshConfig } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import type { DaemonServerHandle } from '../server.js';
 import { getRunDir, persistRunMeta } from './persist.js';

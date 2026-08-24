@@ -1,4 +1,4 @@
-import type { Task } from '@arch/schemas';
+import type { Task } from '@losina/schemas';
 import { Text } from 'ink';
 import { taskStyle } from '../task-style.js';
 import { ACCENT, SELECTION_CURSOR } from '../theme.js';

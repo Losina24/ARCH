@@ -1,5 +1,5 @@
-import type { ArchClient } from '@arch/daemon-client';
-import type { AgentMeshConfig } from '@arch/schemas';
+import type { ArchClient } from '@losina/daemon-client';
+import type { AgentMeshConfig } from '@losina/schemas';
 import { Box } from 'ink';
 import type { Stdin } from 'ink-testing-library';
 import { render } from 'ink-testing-library';

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type DaemonServerHandle, startDaemonServer } from '@arch/daemon';
+import { type DaemonServerHandle, startDaemonServer } from '@losina/daemon';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArchClient } from './arch-client.js';
 

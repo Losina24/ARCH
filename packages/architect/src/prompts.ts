@@ -1,4 +1,4 @@
-import type { RunMeta } from '@arch/schemas';
+import type { RunMeta } from '@losina/schemas';
 
 const TASKS_INDEX_SCHEMA = `tasks:
   - id: TASK-001            # stable id, format TASK-NNN

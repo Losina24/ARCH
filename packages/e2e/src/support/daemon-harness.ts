@@ -1,6 +1,6 @@
-import { getArchPaths } from '@arch/config';
-import { type DaemonServerHandle, startDaemon } from '@arch/daemon';
-import { ArchClient } from '@arch/daemon-client';
+import { getArchPaths } from '@losina/config';
+import { type DaemonServerHandle, startDaemon } from '@losina/daemon';
+import { ArchClient } from '@losina/daemon-client';
 
 export interface DaemonHarness {
   client: ArchClient;
