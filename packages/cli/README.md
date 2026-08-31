@@ -1,11 +1,11 @@
-# @losina/cli
+# @losina/arch-cli
 
 `archctl` — the ARCH orchestration CLI. Starts and controls the ARCH daemon that runs the Architect/TL/Worker agent mesh against a repository.
 
 ## Install
 
 ```bash
-npm install -g @losina/cli
+npm install -g @losina/arch-cli
 ```
 
 ## Usage

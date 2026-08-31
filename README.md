@@ -101,13 +101,13 @@ work on it.
 ### Via npm
 
 ```bash
-npm install -g @losina/cli @losina/tui
+npm install -g @losina/arch-cli @losina/arch-terminal
 ```
 
 This installs the `archctl` and `arch-terminal` executables directly from the npm registry — no
 cloning or building required. It only needs Node.js ≥ 20 on your `PATH` (see
 [Requirements](#requirements) above). Upgrade with the same command, or
-`npm update -g @losina/cli @losina/tui`.
+`npm update -g @losina/arch-cli @losina/arch-terminal`.
 
 ### One-line install script
 
@@ -154,10 +154,10 @@ pnpm link:global
 ```
 
 `pnpm link` doesn't support `--filter` (which forces pnpm's recursive/workspace mode), so `pnpm
---filter @losina/cli link --global` is out. `pnpm --dir`/`-C` doesn't work either — inside a pnpm
+--filter @losina/arch-cli link --global` is out. `pnpm --dir`/`-C` doesn't work either — inside a pnpm
 workspace it still resolves the *workspace root* package instead of the one at that path, so it
 ends up linking the private root package (which has no `bin` entries) instead of
-`@losina/cli`/`@losina/tui`. `link:global` works around this by actually changing directory into each
+`@losina/arch-cli`/`@losina/arch-terminal`. `link:global` works around this by actually changing directory into each
 package before linking it — see the `link:global` script in [`package.json`](package.json) if you
 need to run the two steps separately.
 

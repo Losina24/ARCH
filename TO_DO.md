@@ -45,7 +45,7 @@ puede hacer desde este PC:
 5. **Comprobar la instalación real**:
 
    ```bash
-   npm install -g @losina/cli @losina/tui
+   npm install -g @losina/arch-cli @losina/arch-terminal
    archctl --version
    arch-terminal
    ```

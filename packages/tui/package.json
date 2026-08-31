@@ -1,5 +1,5 @@
 {
-  "name": "@losina/tui",
+  "name": "@losina/arch-terminal",
   "version": "0.1.0",
   "description": "arch-terminal — the ARCH terminal UI.",
   "license": "MIT",

@@ -1,5 +1,5 @@
 {
-  "name": "@losina/cli",
+  "name": "@losina/arch-cli",
   "version": "0.1.0",
   "description": "archctl — the ARCH orchestration CLI.",
   "license": "MIT",
