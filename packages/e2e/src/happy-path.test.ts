@@ -53,7 +53,7 @@ describe('happy path', () => {
       (event) => event.type === 'run:status-changed' && event.phase === 'definition',
     );
     const run = await daemon.client.createRun({ prompt: 'Add a greeting file', cwd: repo.cwd });
-    expect(run.phase).toBe('definition');
+    expect(run.phase).toBe('grilling');
     await planReady;
 
     const plan = await daemon.client.getRunPlan({ runId: run.runId });

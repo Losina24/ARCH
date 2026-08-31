@@ -98,6 +98,24 @@ export function buildActivityLog(
       return;
     }
 
+    if (event.type === 'grilling:question-asked') {
+      entries.push({
+        id,
+        text: withTime('Architect asked a clarifying question'),
+        tone: 'warning',
+      });
+      return;
+    }
+
+    if (event.type === 'grilling:answered') {
+      entries.push({
+        id,
+        text: withTime(event.skipped ? 'Grilling skipped' : 'Answered the Architect'),
+        tone: 'info',
+      });
+      return;
+    }
+
     if (event.type === 'review:requested') {
       entries.push({ id, text: withTime(`Review requested for ${event.taskId}`), tone: 'info' });
       return;

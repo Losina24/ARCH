@@ -96,6 +96,11 @@ export class FakeClaudeRuntime {
   async handle(options: RunHeadlessOptions): Promise<RunHeadlessResult> {
     const sessionId = randomUUID();
 
+    // Skip the grilling phase in e2e tests — they weren't written with a clarifying Q&A round in mind.
+    if (options.prompt.includes('GRILLING_DONE')) {
+      return { sessionId, output: 'GRILLING_DONE' };
+    }
+
     if (options.prompt.includes('Definition phase')) {
       await this.writePlan(options);
       return { sessionId, output: 'PLAN_READY' };

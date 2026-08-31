@@ -12,6 +12,7 @@ interface ModalProps {
 }
 
 const SIDE_PADDING = 2;
+const VERTICAL_PADDING = 1;
 
 /**
  * Centered overlay dialog. Must be rendered as a child of a `position:
@@ -22,10 +23,15 @@ const SIDE_PADDING = 2;
  * instead of letting it bleed through the modal's own whitespace. Ink also
  * only supports `backgroundColor` on `Text`, not `Box`, so the solid fill
  * is carried by every Text line rather than the outer container.
+ *
+ * `height` describes the content area only (title/hint row, separator, body lines); one blank
+ * row of padding is added above and below that on top of it, so callers don't need to account
+ * for padding when sizing their content.
  */
 export function Modal({ title, hint, bodyLines, width, height, columns, rows }: ModalProps) {
+  const totalHeight = height + VERTICAL_PADDING * 2;
   const marginLeft = Math.max(0, Math.floor((columns - width) / 2));
-  const marginTop = Math.max(0, Math.floor((rows - height) / 2));
+  const marginTop = Math.max(0, Math.floor((rows - totalHeight) / 2));
   const contentWidth = width - SIDE_PADDING * 2;
   const gap = Math.max(0, contentWidth - title.length - hint.length);
   const sidePadding = ' '.repeat(SIDE_PADDING);
@@ -39,9 +45,16 @@ export function Modal({ title, hint, bodyLines, width, height, columns, rows }: 
       marginLeft={marginLeft}
       marginTop={marginTop}
       width={width}
-      height={height}
+      height={totalHeight}
       flexDirection="column"
     >
+      {Array.from({ length: VERTICAL_PADDING }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: padding rows are interchangeable blank lines
+        <Text key={`top-${index}`} backgroundColor={MODAL_BG}>
+          {blankLine}
+        </Text>
+      ))}
+
       <Text backgroundColor={MODAL_BG}>
         {sidePadding}
         <Text bold color={ACCENT} backgroundColor={MODAL_BG}>
@@ -63,6 +76,13 @@ export function Modal({ title, hint, bodyLines, width, height, columns, rows }: 
       {Array.from({ length: fillerRows }, (_, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: filler rows are interchangeable blank lines
         <Text key={index} backgroundColor={MODAL_BG}>
+          {blankLine}
+        </Text>
+      ))}
+
+      {Array.from({ length: VERTICAL_PADDING }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: padding rows are interchangeable blank lines
+        <Text key={`bottom-${index}`} backgroundColor={MODAL_BG}>
           {blankLine}
         </Text>
       ))}

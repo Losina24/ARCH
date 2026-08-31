@@ -1,14 +1,14 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runClaudeHeadless } from '@losina/claude-runtime';
+import { runAgentHeadless } from '@losina/agent-runtime';
 import type { RunMeta, Task } from '@losina/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reviewTask } from './review-task.js';
 
-vi.mock('@losina/claude-runtime', () => ({ runClaudeHeadless: vi.fn() }));
+vi.mock('@losina/agent-runtime', () => ({ runAgentHeadless: vi.fn() }));
 
-const mockedRunClaudeHeadless = vi.mocked(runClaudeHeadless);
+const mockedRunAgentHeadless = vi.mocked(runAgentHeadless);
 
 describe('reviewTask', () => {
   let cwd: string;
@@ -38,7 +38,7 @@ describe('reviewTask', () => {
       checks: [],
     };
     correctionFilePath = join(cwd, 'TASK-001.correction-1.md');
-    mockedRunClaudeHeadless.mockReset();
+    mockedRunAgentHeadless.mockReset();
   });
 
   afterEach(async () => {
@@ -46,7 +46,7 @@ describe('reviewTask', () => {
   });
 
   it('approves the task when the agent leaves no correction file behind', async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'APPROVED' });
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'APPROVED' });
 
     const { verdict, sessionId } = await reviewTask({
       run,
@@ -64,7 +64,7 @@ describe('reviewTask', () => {
   });
 
   it('requests a correction when the agent writes the correction file', async () => {
-    mockedRunClaudeHeadless.mockImplementation(async () => {
+    mockedRunAgentHeadless.mockImplementation(async () => {
       await writeFile(correctionFilePath, 'Handle the negative-number case too.', 'utf-8');
       return { sessionId: 'session-2', output: 'NEEDS_CORRECTION' };
     });
@@ -86,8 +86,8 @@ describe('reviewTask', () => {
     });
   });
 
-  it('forwards model, cwd, resumeSessionId and signal to runClaudeHeadless', async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'APPROVED' });
+  it('forwards model, cwd, resumeSessionId and signal to runAgentHeadless', async () => {
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'APPROVED' });
     const controller = new AbortController();
 
     await reviewTask({
@@ -103,7 +103,7 @@ describe('reviewTask', () => {
       signal: controller.signal,
     });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call).toMatchObject({
       model: 'opus',
       cwd,
@@ -113,8 +113,8 @@ describe('reviewTask', () => {
     });
   });
 
-  it('includes the worker summary in the prompt sent to runClaudeHeadless', async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'APPROVED' });
+  it('includes the worker summary in the prompt sent to runAgentHeadless', async () => {
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'APPROVED' });
 
     await reviewTask({
       run,
@@ -127,7 +127,7 @@ describe('reviewTask', () => {
       workerSummary: 'Implemented add(a, b) using a simple sum.',
     });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).toContain('Implemented add(a, b) using a simple sum.');
   });
 });

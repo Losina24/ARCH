@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { ClaudeApiRejectionError, ClaudeStreamAbortedError } from '@losina/claude-runtime';
+import { describeTransientDispatchFailure, isTransientDispatchError } from '@losina/agent-runtime';
 import {
   type RunEventBus,
   commitAll,
@@ -48,12 +48,13 @@ const MAX_INFRA_CHECK_RETRIES = 3;
 
 /**
  * Cap for automatic retries of a worker dispatch that failed for reasons the Worker had no part
- * in — either Claude's CLI rejecting the call before any turn ran (ClaudeApiRejectionError,
- * $0 billed) or its turn loop getting cut off mid-response (ClaudeStreamAbortedError, some cost
- * already billed but no usable output produced). Both are transient and always safe to retry
- * as-is. Deliberately separate from config.execution.maxRetries: that budget caps
- * content-correction rounds (failed checks, scope violations, review rejections), a different
- * concern from retrying an infrastructure-level dispatch failure that never produced any output.
+ * in — either the CLI rejecting the call before any turn ran ($0/no-op billed) or its turn loop
+ * getting cut off mid-response (some cost already billed but no usable output produced), for
+ * whichever provider (Claude or Codex) that task's model routes to. Both are transient and
+ * always safe to retry as-is. Deliberately separate from config.execution.maxRetries: that
+ * budget caps content-correction rounds (failed checks, scope violations, review rejections), a
+ * different concern from retrying an infrastructure-level dispatch failure that never produced
+ * any output.
  */
 const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
 
@@ -85,14 +86,6 @@ function otherScopedTasks(tasksIndex: TasksIndex, taskId: string): Task[] {
   return tasksIndex.tasks.filter((other) => other.id !== taskId && other.scope.length > 0);
 }
 
-function describeTransientDispatchFailure(
-  error: ClaudeApiRejectionError | ClaudeStreamAbortedError,
-): string {
-  return error instanceof ClaudeApiRejectionError
-    ? 'dispatch rejected before execution'
-    : 'dispatch aborted mid-stream';
-}
-
 async function dispatchWorkerWithTransientErrorRetry(
   taskId: string,
   input: DispatchWorkerInput,
@@ -102,15 +95,13 @@ async function dispatchWorkerWithTransientErrorRetry(
     try {
       return await dispatchWorker(input);
     } catch (error) {
-      const isTransient =
-        error instanceof ClaudeApiRejectionError || error instanceof ClaudeStreamAbortedError;
-      if (!isTransient || retries >= MAX_TRANSIENT_DISPATCH_RETRIES) {
+      if (!isTransientDispatchError(error) || retries >= MAX_TRANSIENT_DISPATCH_RETRIES) {
         throw error;
       }
       retries += 1;
       console.error(
         `[daemon] task ${taskId} ${describeTransientDispatchFailure(error)} (attempt ${retries}/${MAX_TRANSIENT_DISPATCH_RETRIES}), retrying:`,
-        error.message,
+        error instanceof Error ? error.message : error,
       );
     }
   }

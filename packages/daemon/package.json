@@ -24,8 +24,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@losina/agent-runtime": "workspace:*",
     "@losina/architect": "workspace:*",
-    "@losina/claude-runtime": "workspace:*",
     "@losina/config": "workspace:*",
     "@losina/core": "workspace:*",
     "@losina/ipc": "workspace:*",

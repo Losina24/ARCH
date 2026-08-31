@@ -1,0 +1,33 @@
+{
+  "name": "@losina/opencode-runtime",
+  "version": "0.1.0",
+  "description": "Headless invocation of the OpenCode CLI for ARCH agents.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Losina24/ARCH.git",
+    "directory": "packages/opencode-runtime"
+  },
+  "homepage": "https://github.com/Losina24/ARCH#readme",
+  "bugs": "https://github.com/Losina24/ARCH/issues",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "execa": "^9.5.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

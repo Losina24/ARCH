@@ -29,6 +29,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@losina/agent-runtime": "workspace:*",
     "@losina/config": "workspace:*",
     "@losina/core": "workspace:*",
     "@losina/daemon-client": "workspace:*",

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { runClaudeHeadless } from '@losina/claude-runtime';
+import { runAgentHeadless } from '@losina/agent-runtime';
 import { getArchPaths } from '@losina/config';
 import { loadTasksIndex } from '@losina/core';
 import type { RunMeta, RunPlan } from '@losina/schemas';
@@ -37,7 +37,7 @@ export async function planProject(input: PlanProjectInput): Promise<PlanProjectO
     ? buildRefinePlanPrompt({ ...promptInput, feedback: input.feedback })
     : buildPlanPrompt(promptInput);
 
-  const { sessionId } = await runClaudeHeadless({
+  const { sessionId } = await runAgentHeadless({
     prompt,
     model: input.model,
     cwd: run.cwd,

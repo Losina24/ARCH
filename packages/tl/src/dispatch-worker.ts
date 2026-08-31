@@ -1,4 +1,4 @@
-import { runClaudeHeadless } from '@losina/claude-runtime';
+import { runAgentHeadless } from '@losina/agent-runtime';
 import { type WorktreeHandle, getStagedFiles, stageAll } from '@losina/core';
 import type { Task } from '@losina/schemas';
 import { type CorrectionSource, buildWorkerPrompt } from './prompts.js';
@@ -40,7 +40,7 @@ export async function dispatchWorker(input: DispatchWorkerInput): Promise<Dispat
     input.task.checks,
   );
 
-  const { sessionId, output } = await runClaudeHeadless({
+  const { sessionId, output } = await runAgentHeadless({
     prompt,
     model: input.model,
     cwd: input.worktree.path,

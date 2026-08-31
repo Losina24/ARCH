@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-export const RunPhaseSchema = z.enum(['definition', 'implementation', 'done', 'blocked']);
+export const RunPhaseSchema = z.enum([
+  'grilling',
+  'definition',
+  'implementation',
+  'done',
+  'blocked',
+]);
 
 export type RunPhase = z.infer<typeof RunPhaseSchema>;
 

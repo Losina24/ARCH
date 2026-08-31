@@ -1,16 +1,16 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runClaudeHeadless } from '@losina/claude-runtime';
+import { runAgentHeadless } from '@losina/agent-runtime';
 import type { WorktreeHandle } from '@losina/core';
 import type { Task } from '@losina/schemas';
 import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dispatchWorker } from './dispatch-worker.js';
 
-vi.mock('@losina/claude-runtime', () => ({ runClaudeHeadless: vi.fn() }));
+vi.mock('@losina/agent-runtime', () => ({ runAgentHeadless: vi.fn() }));
 
-const mockedRunClaudeHeadless = vi.mocked(runClaudeHeadless);
+const mockedRunAgentHeadless = vi.mocked(runAgentHeadless);
 
 const task: Task = {
   id: 'TASK-001',
@@ -36,7 +36,7 @@ describe('dispatchWorker', () => {
     await execa('git', ['commit', '-m', 'initial commit'], { cwd: path });
 
     worktree = { path, branch: 'feat/TASK-001' };
-    mockedRunClaudeHeadless.mockReset();
+    mockedRunAgentHeadless.mockReset();
   });
 
   afterEach(async () => {
@@ -44,7 +44,7 @@ describe('dispatchWorker', () => {
   });
 
   it('stages the files the agent wrote and reports them as filesChanged', async () => {
-    mockedRunClaudeHeadless.mockImplementation(async () => {
+    mockedRunAgentHeadless.mockImplementation(async () => {
       await writeFile(join(worktree.path, 'src/index.js'), 'exports.add = (a, b) => a + b;', {
         flag: 'wx',
       }).catch(async () => {
@@ -66,7 +66,7 @@ describe('dispatchWorker', () => {
   });
 
   it('reports no changed files when the agent made none', async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({
+    mockedRunAgentHeadless.mockResolvedValue({
       sessionId: 'session-1',
       output: 'No changes needed.',
     });
@@ -82,7 +82,7 @@ describe('dispatchWorker', () => {
   });
 
   it('builds a correction prompt when correctionMarkdown is set, and forwards resumeSessionId/signal', async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({ sessionId: 'session-2', output: 'Fixed.' });
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-2', output: 'Fixed.' });
     const controller = new AbortController();
 
     await dispatchWorker({
@@ -95,7 +95,7 @@ describe('dispatchWorker', () => {
       signal: controller.signal,
     });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).toContain('Handle negative numbers too.');
     expect(call).toMatchObject({
       cwd: worktree.path,
@@ -107,7 +107,7 @@ describe('dispatchWorker', () => {
   });
 
   it('attributes the correction to the source given in correctionSource', async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({ sessionId: 'session-4', output: 'Fixed.' });
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-4', output: 'Fixed.' });
 
     await dispatchWorker({
       task,
@@ -118,12 +118,12 @@ describe('dispatchWorker', () => {
       correctionSource: 'checks',
     });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).toContain('The Team Lead ran');
   });
 
   it('embeds humanMessage in the prompt on a fresh dispatch', async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({ sessionId: 'session-3', output: 'Retried.' });
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-3', output: 'Retried.' });
 
     await dispatchWorker({
       task,
@@ -133,12 +133,12 @@ describe('dispatchWorker', () => {
       humanMessage: 'Try using the v2 API instead.',
     });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).toContain('Try using the v2 API instead.');
   });
 
   it("passes the task's exact check commands into the prompt so the worker can verify against them", async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({ sessionId: 'session-5', output: 'Done.' });
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-5', output: 'Done.' });
 
     await dispatchWorker({
       task: {
@@ -150,7 +150,7 @@ describe('dispatchWorker', () => {
       model: 'sonnet',
     });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).toContain('- build: pnpm --filter some-app build');
   });
 });

@@ -75,6 +75,45 @@ ${TASKS_INDEX_SCHEMA}
 End your final message with exactly one line: PLAN_READY`;
 }
 
+interface GrillingPromptInput {
+  run: RunMeta;
+  questionFilePath: string;
+}
+
+export function buildGrillingPrompt(input: GrillingPromptInput): string {
+  const { run, questionFilePath } = input;
+  return `You are the ARCHITECT agent of ARCH, an autonomous multi-agent software engineering system. Before writing the implementation plan, you get a chance to clarify the project with the user through a short back-and-forth — one question at a time. You must NOT write, edit, or refactor any application or source code, and you must NOT modify any file outside of "${questionFilePath}".
+
+User request:
+"""
+${run.prompt}
+"""
+
+Explore the repository as needed (read files, run read-only commands) to ground your questions in how this codebase actually works. Then decide:
+
+- If there is something important and genuinely ambiguous or underspecified that would change your plan depending on the answer: write exactly one question to "${questionFilePath}" as JSON matching this schema: {"question": string, "recommendation": string} — "recommendation" is the answer you'd pick yourself if the user just pressed enter, so it must be a concrete, actionable default, not a restatement of the question. Then end your final message with exactly one line: QUESTION_READY
+- If you already have enough information to produce a solid plan: do not write any file, and end your final message with exactly one line: GRILLING_DONE
+
+Ask only about things that would actually change the plan. Do not ask about implementation details you can decide yourself, and do not ask more than one question per turn.`;
+}
+
+interface GrillingAnswerPromptInput extends GrillingPromptInput {
+  priorAnswer: string;
+}
+
+export function buildGrillingAnswerPrompt(input: GrillingAnswerPromptInput): string {
+  const { questionFilePath, priorAnswer } = input;
+  return `The user answered your previous question:
+"""
+${priorAnswer}
+"""
+
+Decide again, following the same rules as before:
+
+- If there is still something important and genuinely ambiguous that would change your plan: write exactly one question to "${questionFilePath}" as JSON matching this schema: {"question": string, "recommendation": string}. Then end your final message with exactly one line: QUESTION_READY
+- If you now have enough information to produce a solid plan: do not write any file, and end your final message with exactly one line: GRILLING_DONE`;
+}
+
 interface ReviewPromptInput {
   taskId: string;
   taskMarkdown: string;

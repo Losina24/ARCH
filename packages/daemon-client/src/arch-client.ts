@@ -4,6 +4,7 @@ import type {
   DaemonShutdownRequest,
   PersistedRunEvent,
   RunAbortRequest,
+  RunAnswerGrillingQuestionRequest,
   RunApproveRequest,
   RunCreateRequest,
   RunDeleteRequest,
@@ -56,6 +57,10 @@ export class ArchClient {
 
   refineRun(payload: RunRefineRequest): Promise<RunMeta> {
     return this.rpc.request('run.refine', payload);
+  }
+
+  answerGrillingQuestion(payload: RunAnswerGrillingQuestionRequest): Promise<RunMeta> {
+    return this.rpc.request('run.answerGrillingQuestion', payload);
   }
 
   getRunPlan(payload: RunGetPlanRequest): Promise<RunPlan | null> {

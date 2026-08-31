@@ -17,20 +17,21 @@ describe('loadRunSessions / saveRunSessions', () => {
   });
 
   it('returns an empty session map when no file exists yet', async () => {
-    expect(await loadRunSessions(runDir)).toEqual({ taskSessions: {} });
+    expect(await loadRunSessions(runDir)).toEqual({ taskSessions: {}, grillingSeq: 0 });
   });
 
   it('round-trips a populated session map', async () => {
     const sessions: RunSessions = {
       architectSessionId: 'session-architect',
       taskSessions: { 'TASK-001': 'session-worker-1' },
+      grillingSeq: 0,
     };
     await saveRunSessions(runDir, sessions);
     expect(await loadRunSessions(runDir)).toEqual(sessions);
   });
 
   it('supports the read-right-before-write merge pattern across two independent tasks', async () => {
-    await saveRunSessions(runDir, { taskSessions: { 'TASK-001': 'session-1' } });
+    await saveRunSessions(runDir, { taskSessions: { 'TASK-001': 'session-1' }, grillingSeq: 0 });
 
     const current = await loadRunSessions(runDir);
     await saveRunSessions(runDir, {
@@ -40,6 +41,7 @@ describe('loadRunSessions / saveRunSessions', () => {
 
     expect(await loadRunSessions(runDir)).toEqual({
       taskSessions: { 'TASK-001': 'session-1', 'TASK-002': 'session-2' },
+      grillingSeq: 0,
     });
   });
 });

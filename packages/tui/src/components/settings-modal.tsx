@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { useEffect, useState } from 'react';
 import { ACCENT, MODAL_BG, SELECTION_CURSOR } from '../theme.js';
+import { ModelPickerModal } from './model-picker-modal.js';
 import { PROMPT_BOX_MAX_WIDTH } from './prompt-box.js';
 
 interface SettingsModalProps {
@@ -12,24 +13,15 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-// Canonical model IDs only (skip the short aliases from the registry) — these are
-// what gets picked from and what's stored/displayed.
-const MODEL_OPTIONS = [
-  'claude-opus-5',
-  'claude-sonnet-5',
-  'claude-fable-5',
-  'claude-haiku-4-5-20251001',
-] as const;
-
 const BOOLEAN_OPTIONS = ['true', 'false'] as const;
 
 const FIELDS = [
-  { key: 'architectModel', label: 'Architect model', options: MODEL_OPTIONS },
-  { key: 'tlModel', label: 'TL model', options: MODEL_OPTIONS },
-  { key: 'workerModel', label: 'Worker model', options: MODEL_OPTIONS },
-  { key: 'maxConcurrency', label: 'Max concurrency' },
-  { key: 'maxRetries', label: 'Max retries' },
-  { key: 'useWorktrees', label: 'Use worktrees', options: BOOLEAN_OPTIONS },
+  { key: 'architectModel', label: 'Architect model', kind: 'model' },
+  { key: 'tlModel', label: 'TL model', kind: 'model' },
+  { key: 'workerModel', label: 'Worker model', kind: 'model' },
+  { key: 'maxConcurrency', label: 'Max concurrency', kind: 'text' },
+  { key: 'maxRetries', label: 'Max retries', kind: 'text' },
+  { key: 'useWorktrees', label: 'Use worktrees', kind: 'boolean', options: BOOLEAN_OPTIONS },
 ] as const;
 
 type FieldKey = (typeof FIELDS)[number]['key'];
@@ -39,9 +31,14 @@ function hasOptions(field: Field): field is Field & { options: readonly string[]
   return 'options' in field;
 }
 
+function isModelField(field: Field): boolean {
+  return field.kind === 'model';
+}
+
 const TITLE = 'Settings';
 const HINT = 'enter edit · s save · esc close';
 const SIDE_PADDING = 2;
+const VERTICAL_PADDING = 1;
 const CURSOR_WIDTH = 2;
 const LABEL_WIDTH = Math.max(...FIELDS.map((field) => field.label.length)) + 2;
 
@@ -52,7 +49,7 @@ const CONTENT_WIDTH = Math.max(
   PROMPT_BOX_MAX_WIDTH - SIDE_PADDING * 2,
 );
 const WIDTH = CONTENT_WIDTH + SIDE_PADDING * 2;
-const HEIGHT = FIELDS.length + 4;
+const HEIGHT = FIELDS.length + 4 + VERTICAL_PADDING * 2;
 
 export function SettingsModal({ client, columns, rows, onClose }: SettingsModalProps) {
   const [values, setValues] = useState<Record<FieldKey, string>>({
@@ -67,6 +64,7 @@ export function SettingsModal({ client, columns, rows, onClose }: SettingsModalP
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [optionIndex, setOptionIndex] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [status, setStatus] = useState('');
 
   useEffect(() => {
@@ -111,6 +109,8 @@ export function SettingsModal({ client, columns, rows, onClose }: SettingsModalP
   };
 
   useInput((input, key) => {
+    if (pickerOpen) return; // ModelPickerModal owns input while it's open
+
     const field = FIELDS[selected];
 
     if (editing && hasOptions(field)) {
@@ -138,15 +138,18 @@ export function SettingsModal({ client, columns, rows, onClose }: SettingsModalP
     } else if (key.downArrow) {
       setSelected((index) => Math.min(FIELDS.length - 1, index + 1));
     } else if (key.return) {
-      if (hasOptions(field)) {
+      if (isModelField(field)) {
+        setPickerOpen(true);
+      } else if (hasOptions(field)) {
         const currentIndex = field.options.indexOf(
           values[field.key] as (typeof field.options)[number],
         );
         setOptionIndex(currentIndex === -1 ? 0 : currentIndex);
+        setEditing(true);
       } else {
         setEditValue(values[field.key]);
+        setEditing(true);
       }
-      setEditing(true);
     } else if (input === 's') {
       void save();
     }
@@ -159,6 +162,21 @@ export function SettingsModal({ client, columns, rows, onClose }: SettingsModalP
   const blankLine = ' '.repeat(WIDTH);
   const valueWidth = Math.max(0, CONTENT_WIDTH - CURSOR_WIDTH - LABEL_WIDTH);
 
+  if (pickerOpen) {
+    return (
+      <ModelPickerModal
+        currentValue={values[FIELDS[selected].key]}
+        columns={columns}
+        rows={rows}
+        onSelect={(model) => {
+          setValues((previous) => ({ ...previous, [FIELDS[selected].key]: model }));
+          setPickerOpen(false);
+        }}
+        onCancel={() => setPickerOpen(false)}
+      />
+    );
+  }
+
   return (
     <Box
       position="absolute"
@@ -168,6 +186,13 @@ export function SettingsModal({ client, columns, rows, onClose }: SettingsModalP
       height={HEIGHT}
       flexDirection="column"
     >
+      {Array.from({ length: VERTICAL_PADDING }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: padding rows are interchangeable blank lines
+        <Text key={`top-${index}`} backgroundColor={MODAL_BG}>
+          {blankLine}
+        </Text>
+      ))}
+
       <Text backgroundColor={MODAL_BG}>
         {sidePadding}
         <Text bold color={ACCENT} backgroundColor={MODAL_BG}>
@@ -225,6 +250,13 @@ export function SettingsModal({ client, columns, rows, onClose }: SettingsModalP
       <Text
         backgroundColor={MODAL_BG}
       >{`${sidePadding}${status.padEnd(CONTENT_WIDTH)}${sidePadding}`}</Text>
+
+      {Array.from({ length: VERTICAL_PADDING }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: padding rows are interchangeable blank lines
+        <Text key={`bottom-${index}`} backgroundColor={MODAL_BG}>
+          {blankLine}
+        </Text>
+      ))}
     </Box>
   );
 }

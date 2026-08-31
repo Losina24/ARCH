@@ -73,6 +73,22 @@ export interface HumanPromptSentEvent {
   text: string;
 }
 
+export interface GrillingQuestionAskedEvent {
+  type: 'grilling:question-asked';
+  runId: string;
+  seq: number;
+  question: string;
+  recommendation: string;
+}
+
+export interface GrillingAnsweredEvent {
+  type: 'grilling:answered';
+  runId: string;
+  seq: number;
+  answer?: string;
+  skipped: boolean;
+}
+
 export type ArchMeshEvent =
   | RunStatusChangedEvent
   | TaskStatusChangedEvent
@@ -80,7 +96,9 @@ export type ArchMeshEvent =
   | AgentMessageEvent
   | ReviewRequestedEvent
   | ReviewCompletedEvent
-  | HumanPromptSentEvent;
+  | HumanPromptSentEvent
+  | GrillingQuestionAskedEvent
+  | GrillingAnsweredEvent;
 
 /** One event as durably persisted to a run's event log, paired with when it was broadcast. */
 export interface PersistedRunEvent {

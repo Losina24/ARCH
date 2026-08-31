@@ -1,15 +1,15 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runClaudeHeadless } from '@losina/claude-runtime';
+import { runAgentHeadless } from '@losina/agent-runtime';
 import { getArchPaths } from '@losina/config';
 import type { RunMeta } from '@losina/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { planProject } from './plan-project.js';
 
-vi.mock('@losina/claude-runtime', () => ({ runClaudeHeadless: vi.fn() }));
+vi.mock('@losina/agent-runtime', () => ({ runAgentHeadless: vi.fn() }));
 
-const mockedRunClaudeHeadless = vi.mocked(runClaudeHeadless);
+const mockedRunAgentHeadless = vi.mocked(runAgentHeadless);
 
 describe('planProject', () => {
   let cwd: string;
@@ -31,7 +31,7 @@ describe('planProject', () => {
       createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z',
     };
-    mockedRunClaudeHeadless.mockReset();
+    mockedRunAgentHeadless.mockReset();
   });
 
   afterEach(async () => {
@@ -52,7 +52,7 @@ describe('planProject', () => {
   }
 
   it('reads back the plan files the agent is expected to have written', async () => {
-    mockedRunClaudeHeadless.mockImplementation(async () => {
+    mockedRunAgentHeadless.mockImplementation(async () => {
       await writeFakePlan();
       return { sessionId: 'session-1', output: 'PLAN_READY' };
     });
@@ -66,32 +66,32 @@ describe('planProject', () => {
   });
 
   it('uses buildPlanPrompt (no feedback) when no feedback is given', async () => {
-    mockedRunClaudeHeadless.mockImplementation(async () => {
+    mockedRunAgentHeadless.mockImplementation(async () => {
       await writeFakePlan();
       return { sessionId: 'session-1', output: 'PLAN_READY' };
     });
 
     await planProject({ run, model: 'sonnet' });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).not.toContain('User feedback');
     expect(call?.prompt).toContain(run.prompt);
   });
 
   it('uses buildRefinePlanPrompt (with feedback) when feedback is given', async () => {
-    mockedRunClaudeHeadless.mockImplementation(async () => {
+    mockedRunAgentHeadless.mockImplementation(async () => {
       await writeFakePlan();
       return { sessionId: 'session-2', output: 'PLAN_READY' };
     });
 
     await planProject({ run, model: 'sonnet', feedback: 'Split the task in two' });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).toContain('Split the task in two');
   });
 
-  it('forwards model, cwd, resumeSessionId and signal to runClaudeHeadless', async () => {
-    mockedRunClaudeHeadless.mockImplementation(async () => {
+  it('forwards model, cwd, resumeSessionId and signal to runAgentHeadless', async () => {
+    mockedRunAgentHeadless.mockImplementation(async () => {
       await writeFakePlan();
       return { sessionId: 'session-3', output: 'PLAN_READY' };
     });
@@ -104,7 +104,7 @@ describe('planProject', () => {
       signal: controller.signal,
     });
 
-    const call = mockedRunClaudeHeadless.mock.calls[0]?.[0];
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call).toMatchObject({
       model: 'opus',
       cwd,
@@ -115,7 +115,7 @@ describe('planProject', () => {
   });
 
   it('propagates an error when the agent never produced tasks-index.yaml', async () => {
-    mockedRunClaudeHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'PLAN_READY' });
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'PLAN_READY' });
     await expect(planProject({ run, model: 'sonnet' })).rejects.toThrow();
   });
 });

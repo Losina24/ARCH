@@ -47,6 +47,12 @@ export interface RunDeleteRequest {
   runId: string;
 }
 
+export interface RunAnswerGrillingQuestionRequest {
+  runId: string;
+  answer?: string;
+  skip?: boolean;
+}
+
 export type DaemonShutdownRequest = Record<string, never>;
 
 export type ConfigGetRequest = Record<string, never>;

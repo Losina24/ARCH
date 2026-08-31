@@ -14,6 +14,8 @@ import { AgentPromptInput } from '../panels/agent-prompt-input.js';
 import { ConsolePanel } from '../panels/console-panel.js';
 import { ExecutionPanel } from '../panels/execution-panel.js';
 import { FeedbackInput } from '../panels/feedback-input.js';
+import { GrillingAnswerInput } from '../panels/grilling-answer-input.js';
+import { GrillingPanel } from '../panels/grilling-panel.js';
 import { PlanificationPanel } from '../panels/planification-panel.js';
 import { TaskDetailPanel } from '../panels/task-detail-panel.js';
 import { ERROR, INACTIVE, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
@@ -39,6 +41,7 @@ const FOOTER_ROWS = 2; // top margin + the status bar line
 const STATUS_MESSAGE_ROWS = 2; // top margin + the transient status line
 const COMMAND_ROWS = 2; // top margin + the command-hints line
 const FEEDBACK_ROWS = 4; // top margin + gradient box (3 rows)
+const GRILLING_ANSWER_ROWS = 4; // top margin + gradient box (3 rows)
 const AGENT_PROMPT_ROWS = 4; // top margin + gradient box (3 rows)
 const BLOCKED_MESSAGE_ROWS = 2; // top margin + the blocked-project warning line
 const MIN_BODY_ROWS = 3;
@@ -99,6 +102,12 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const [config, setConfig] = useState<AgentMeshConfig | null>(null);
   const [revising, setRevising] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [grillingQuestion, setGrillingQuestion] = useState<{
+    seq: number;
+    question: string;
+    recommendation: string;
+  } | null>(null);
+  const [grillingAnswer, setGrillingAnswer] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -209,6 +218,18 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
           setRevising(false);
         }
       }
+
+      if (event.type === 'grilling:question-asked') {
+        setGrillingQuestion({
+          seq: event.seq,
+          question: event.question,
+          recommendation: event.recommendation,
+        });
+      }
+
+      if (event.type === 'grilling:answered') {
+        setGrillingQuestion(null);
+      }
     });
   }, [client, run.runId]);
 
@@ -231,14 +252,29 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       .getRunEvents({ runId: run.runId })
       .then((history) => {
         const buffered = drainBuffered();
-        setEvents([
+        const allEvents = [
           ...history.map((entry) => entry.event),
           ...buffered.map((entry) => entry.event),
-        ]);
+        ];
+        setEvents(allEvents);
         setEventTimestamps([
           ...history.map((entry) => entry.timestamp),
           ...buffered.map((entry) => entry.timestamp),
         ]);
+
+        let lastQuestion: { seq: number; question: string; recommendation: string } | null = null;
+        for (const event of allEvents) {
+          if (event.type === 'grilling:question-asked') {
+            lastQuestion = {
+              seq: event.seq,
+              question: event.question,
+              recommendation: event.recommendation,
+            };
+          } else if (event.type === 'grilling:answered') {
+            lastQuestion = null;
+          }
+        }
+        setGrillingQuestion(lastQuestion);
       })
       .catch(() => {
         const buffered = drainBuffered();
@@ -337,6 +373,43 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     }
   };
 
+  const submitGrillingAnswer = async (value: string) => {
+    if (busy) return;
+    const trimmed = value.trim();
+
+    if (trimmed === '/skip' || trimmed === '/done') {
+      setBusy(true);
+      setStatus('Skipping the remaining questions…');
+      try {
+        const updated = await client.answerGrillingQuestion({ runId: run.runId, skip: true });
+        setRun(updated);
+        setGrillingAnswer('');
+        setStatus('');
+      } catch (error) {
+        setStatus(`Failed to skip: ${(error as Error).message}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    const answer = trimmed || grillingQuestion?.recommendation;
+    if (!answer) return;
+
+    setBusy(true);
+    setStatus('Sending your answer to the Architect…');
+    try {
+      const updated = await client.answerGrillingQuestion({ runId: run.runId, answer });
+      setRun(updated);
+      setGrillingAnswer('');
+      setStatus('');
+    } catch (error) {
+      setStatus(`Failed to send the answer: ${(error as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const sendHumanPromptToTask = async (
     targetTask: Task,
     message: string,
@@ -383,6 +456,8 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   };
 
   const showFeedbackInput = tab === 'planification' && run.phase === 'definition';
+  const showGrillingInput =
+    tab === 'planification' && run.phase === 'grilling' && grillingQuestion !== null;
   const showAgentPromptInput = tab === 'console' && selectedAgentId !== null;
   const showTaskConsoleInput =
     liveOpenTask !== null &&
@@ -404,6 +479,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     COMMAND_ROWS +
     (status ? STATUS_MESSAGE_ROWS : 0) +
     (showFeedbackInput ? FEEDBACK_ROWS : 0) +
+    (showGrillingInput ? GRILLING_ANSWER_ROWS : 0) +
     (showAgentPromptInput ? AGENT_PROMPT_ROWS : 0) +
     (showTaskConsoleInput ? AGENT_PROMPT_ROWS : 0) +
     (showBlockedMessage ? BLOCKED_MESSAGE_ROWS : 0);
@@ -559,6 +635,14 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       return;
     }
 
+    if (showGrillingInput) {
+      if (key.escape) {
+        if (grillingAnswer) setGrillingAnswer('');
+        else onBack();
+      }
+      return;
+    }
+
     if (showAgentPromptInput) {
       if (key.escape) {
         if (agentPrompt) setAgentPrompt('');
@@ -671,17 +755,24 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
           />
         ) : (
           <>
-            {tab === 'planification' && (
-              <PlanificationPanel
-                run={run}
-                plan={plan}
-                planError={planError}
-                config={config}
-                latestArchitectEvent={latestArchitectEvent}
-                revising={revising}
-                width={width}
-              />
-            )}
+            {tab === 'planification' &&
+              (run.phase === 'grilling' && grillingQuestion ? (
+                <GrillingPanel
+                  question={grillingQuestion.question}
+                  recommendation={grillingQuestion.recommendation}
+                  width={width}
+                />
+              ) : (
+                <PlanificationPanel
+                  run={run}
+                  plan={plan}
+                  planError={planError}
+                  config={config}
+                  latestArchitectEvent={latestArchitectEvent}
+                  revising={revising}
+                  width={width}
+                />
+              ))}
             {tab === 'overview' && (
               <ExecutionPanel
                 plan={plan}
@@ -709,9 +800,10 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       )}
       <Box marginTop={1} justifyContent="space-between">
         <CommandHints hints={commandHints} />
-        {(showFeedbackInput || showAgentPromptInput || showTaskConsoleInput) && (
-          <Text color={statusColor}>{statusText}</Text>
-        )}
+        {(showFeedbackInput ||
+          showGrillingInput ||
+          showAgentPromptInput ||
+          showTaskConsoleInput) && <Text color={statusColor}>{statusText}</Text>}
       </Box>
       {showFeedbackInput && (
         <Box marginTop={1}>
@@ -719,6 +811,17 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
             feedback={feedback}
             onFeedbackChange={setFeedback}
             onSubmitFeedback={submitFeedback}
+            busy={busy}
+            width={width}
+          />
+        </Box>
+      )}
+      {showGrillingInput && (
+        <Box marginTop={1}>
+          <GrillingAnswerInput
+            value={grillingAnswer}
+            onChange={setGrillingAnswer}
+            onSubmit={submitGrillingAnswer}
             busy={busy}
             width={width}
           />

@@ -38,7 +38,7 @@ function architectStatus(
   if (latestEvent?.state === 'failed') {
     return { message: 'The Architect agent failed.', color: ERROR, spinner: false };
   }
-  if (run.phase !== 'definition') {
+  if (run.phase !== 'definition' && run.phase !== 'grilling') {
     return { message: 'Planning finished.', color: SUCCESS, spinner: false };
   }
   if (revising) {

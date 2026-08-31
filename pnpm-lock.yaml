@@ -21,11 +21,30 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
-  packages/architect:
+  packages/agent-runtime:
     dependencies:
       '@losina/claude-runtime':
         specifier: workspace:*
         version: link:../claude-runtime
+      '@losina/codex-runtime':
+        specifier: workspace:*
+        version: link:../codex-runtime
+      '@losina/opencode-runtime':
+        specifier: workspace:*
+        version: link:../opencode-runtime
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)
+
+  packages/architect:
+    dependencies:
+      '@losina/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@losina/config':
         specifier: workspace:*
         version: link:../config
@@ -81,6 +100,22 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)
 
+  packages/codex-runtime:
+    dependencies:
+      '@losina/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      execa:
+        specifier: ^9.5.1
+        version: 9.6.1
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)
+
   packages/config:
     dependencies:
       '@losina/schemas':
@@ -118,12 +153,12 @@ importers:
 
   packages/daemon:
     dependencies:
+      '@losina/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@losina/architect':
         specifier: workspace:*
         version: link:../architect
-      '@losina/claude-runtime':
-        specifier: workspace:*
-        version: link:../claude-runtime
       '@losina/config':
         specifier: workspace:*
         version: link:../config
@@ -222,6 +257,19 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)
 
+  packages/opencode-runtime:
+    dependencies:
+      execa:
+        specifier: ^9.5.1
+        version: 9.6.1
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)
+
   packages/schemas:
     dependencies:
       zod:
@@ -237,9 +285,9 @@ importers:
 
   packages/tl:
     dependencies:
-      '@losina/claude-runtime':
+      '@losina/agent-runtime':
         specifier: workspace:*
-        version: link:../claude-runtime
+        version: link:../agent-runtime
       '@losina/core':
         specifier: workspace:*
         version: link:../core
@@ -262,6 +310,9 @@ importers:
 
   packages/tui:
     dependencies:
+      '@losina/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@losina/config':
         specifier: workspace:*
         version: link:../config
@@ -950,7 +1001,7 @@ packages:
     engines: {node: '>=18'}
 
   isexe@2.0.0:
-    resolution: {integrity: sha1-6PvzdNxVb/iUehDcsFctYz8s+hA=}
+    resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}

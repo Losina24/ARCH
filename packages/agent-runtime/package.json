@@ -1,0 +1,35 @@
+{
+  "name": "@losina/agent-runtime",
+  "version": "0.1.0",
+  "description": "Routes ARCH's headless agent dispatch to Claude Code, Codex, or OpenCode CLI based on the configured model.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Losina24/ARCH.git",
+    "directory": "packages/agent-runtime"
+  },
+  "homepage": "https://github.com/Losina24/ARCH#readme",
+  "bugs": "https://github.com/Losina24/ARCH/issues",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@losina/claude-runtime": "workspace:*",
+    "@losina/codex-runtime": "workspace:*",
+    "@losina/opencode-runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { getArchPaths, loadConfig, saveConfig } from '@losina/config';
-import { loadTasksIndex, saveTasksIndex, workerAgentId } from '@losina/core';
+import { loadRunSessions, loadTasksIndex, saveTasksIndex, workerAgentId } from '@losina/core';
 import type {
   ArchMeshEvent,
   ConfigSetRequest,
   RunAbortRequest,
+  RunAnswerGrillingQuestionRequest,
   RunApproveRequest,
   RunCreateRequest,
   RunDeleteRequest,
@@ -19,6 +20,7 @@ import type {
 } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta, RunPlan } from '@losina/schemas';
 import { runDefinitionPhase } from './orchestrator/definition-phase.js';
+import { runGrillingPhase } from './orchestrator/grilling-phase.js';
 import { runImplementationPhase } from './orchestrator/implementation-phase.js';
 import {
   appendRunEvent,
@@ -42,7 +44,7 @@ async function createRun(
     title: payload.prompt.slice(0, 80),
     prompt: payload.prompt,
     cwd: payload.cwd,
-    phase: 'definition',
+    phase: 'grilling',
     createdAt: now,
     updatedAt: now,
   };
@@ -305,6 +307,26 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
     );
   };
 
+  const triggerGrillingPhase = (runId: string, answer?: { text: string } | { skipped: true }) => {
+    trackPhase(
+      loadConfig(cwd)
+        .then((config) =>
+          runGrillingPhase({
+            runId,
+            archDir,
+            config,
+            runManager,
+            handle,
+            answer,
+            triggerDefinitionPhase,
+          }),
+        )
+        .catch((error) => {
+          console.error(`[daemon] grilling phase failed for run ${runId}:`, error);
+        }),
+    );
+  };
+
   const triggerImplementationPhase = (
     runId: string,
     signal: AbortSignal,
@@ -337,7 +359,7 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
       switch (method) {
         case 'run.create': {
           const run = await createRun(runManager, archDir, payload as RunCreateRequest);
-          triggerDefinitionPhase(run.runId);
+          triggerGrillingPhase(run.runId);
           return run;
         }
         case 'run.list':
@@ -362,6 +384,23 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
           const { runId } = payload as RunGetEventsRequest;
           if (!runManager.get(runId)) throw new Error(`Run not found: ${runId}`);
           return loadRunEvents(archDir, runId);
+        }
+        case 'run.answerGrillingQuestion': {
+          const { runId, answer, skip } = payload as RunAnswerGrillingQuestionRequest;
+          const run = runManager.get(runId);
+          if (!run) throw new Error(`Run not found: ${runId}`);
+          if (run.phase !== 'grilling') {
+            throw new Error(`Run ${runId} is not in the grilling phase`);
+          }
+          handle.broadcast({
+            type: 'grilling:answered',
+            runId,
+            seq: (await loadRunSessions(getRunDir(archDir, runId))).grillingSeq,
+            answer: skip ? undefined : answer,
+            skipped: Boolean(skip),
+          });
+          triggerGrillingPhase(runId, skip ? { skipped: true } : { text: answer ?? '' });
+          return run;
         }
         case 'run.refine': {
           const { runId, feedback } = payload as RunRefineRequest;

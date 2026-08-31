@@ -3,8 +3,18 @@ import type { AgentMeshConfig } from '@losina/schemas';
 import { Box } from 'ink';
 import type { Stdin } from 'ink-testing-library';
 import { render } from 'ink-testing-library';
-import { describe, expect, it, vi } from 'vitest';
-import { SettingsModal } from './settings-modal.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { detectInstalledProvidersAsync, listOpenCodeModels } = vi.hoisted(() => ({
+  detectInstalledProvidersAsync: vi.fn(),
+  listOpenCodeModels: vi.fn(),
+}));
+vi.mock('@losina/agent-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@losina/agent-runtime')>();
+  return { ...actual, detectInstalledProvidersAsync, listOpenCodeModels };
+});
+
+const { SettingsModal } = await import('./settings-modal.js');
 
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -51,6 +61,13 @@ function renderModal(client: ArchClient, onClose = vi.fn()) {
 }
 
 describe('SettingsModal', () => {
+  beforeEach(() => {
+    detectInstalledProvidersAsync
+      .mockReset()
+      .mockResolvedValue(new Set(['claude', 'codex', 'opencode']));
+    listOpenCodeModels.mockReset().mockResolvedValue([]);
+  });
+
   it('loads and renders the current config fields as a centered overlay', async () => {
     const client = mockClient();
     const { lastFrame } = renderModal(client);
@@ -83,27 +100,57 @@ describe('SettingsModal', () => {
     expect(frame).toContain('Max retries');
   });
 
-  it('edits a model field by picking from a list of known models instead of free text', async () => {
+  it('edits a model field through the provider/model picker modal', async () => {
     const client = mockClient();
     const { lastFrame, stdin } = renderModal(client);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
-    await press(stdin, '\r');
+    await press(stdin, '\r'); // opens the picker on the provider step
+    await vi.waitFor(() => expect(lastFrame()).toContain('Select provider'));
+    await tick(); // let ink's useInput effect resubscribe with the now-loaded closure
+
+    await press(stdin, '\r'); // confirms "Claude Code", moves to the model step
+    expect(lastFrame()).toContain('Select model — Claude Code');
+
     await press(stdin, '\x1b[B');
     await press(stdin, '\x1b[B');
-    await press(stdin, '\r');
+    await press(stdin, '\r'); // confirms "claude-fable-5"
 
     expect(lastFrame()).toContain('claude-fable-5');
   });
 
-  it('cancels an in-progress model pick on escape without changing the value', async () => {
+  it('picks an OpenCode model as provider/model and stores the canonical id', async () => {
     const client = mockClient();
     const { lastFrame, stdin } = renderModal(client);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
     await press(stdin, '\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Select provider'));
+    await tick(); // let ink's useInput effect resubscribe with the now-loaded closure
     await press(stdin, '\x1b[B');
-    await press(stdin, '\x1b');
+    await press(stdin, '\x1b[B'); // moves selection down to "OpenCode"
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('Select model — OpenCode');
+
+    await press(stdin, '\r'); // confirms the only listed OpenCode model
+
+    expect(lastFrame()).toContain('github-copilot/gpt-4.1');
+  });
+
+  it('cancels the model picker on escape without changing the value', async () => {
+    const client = mockClient();
+    const { lastFrame, stdin } = renderModal(client);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
+    await press(stdin, '\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Select provider'));
+    await tick(); // let ink's useInput effect resubscribe with the now-loaded closure
+    await press(stdin, '\r');
+    await press(stdin, '\x1b[B');
+    await press(stdin, '\x1b'); // back to the provider step
+    expect(lastFrame()).toContain('Select provider');
+
+    await press(stdin, '\x1b'); // cancels entirely
 
     expect(lastFrame()).toContain('claude-opus-5');
   });
