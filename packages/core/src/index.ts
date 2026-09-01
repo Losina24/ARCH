@@ -7,5 +7,6 @@ export * from './state/checkpoint.js';
 export * from './state/session-store.js';
 export * from './git/worktree-manager.js';
 export * from './git/diff.js';
+export * from './git/repo-root.js';
 export * from './git/install-dependencies.js';
 export * from './mailbox/mailbox.js';

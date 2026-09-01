@@ -1,6 +1,6 @@
 {
   "name": "@losina/schemas",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared Zod schemas for ARCH (Task, RunPlan, RunMeta, CheckDefinition...).",
   "license": "MIT",
   "type": "module",

@@ -212,6 +212,32 @@ describe('ModelPickerModal', () => {
     expect(lastFrame()).not.toContain('github-copilot/gpt-4.1');
   });
 
+  it('lists OpenCode Zen as its own provider with its curated model catalog', async () => {
+    const { lastFrame, stdin } = renderPicker('claude-sonnet-5');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Select provider'));
+    await tick(); // let ink's useInput effect resubscribe with the now-loaded closure
+    expect(lastFrame()).toContain('OpenCode Zen');
+
+    await press(stdin, '\x1b[B'); // Claude Code -> Codex
+    await press(stdin, '\x1b[B'); // Codex -> OpenCode
+    await press(stdin, '\x1b[B'); // OpenCode -> OpenCode Zen
+    await press(stdin, '\r');
+
+    expect(lastFrame()).toContain('Select model — OpenCode Zen');
+    expect(lastFrame()).toContain('opencode/grok-code');
+  });
+
+  it('preselects OpenCode Zen, not generic OpenCode, when the current model is a Zen id', async () => {
+    const { lastFrame, stdin } = renderPicker('opencode/grok-code');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Select provider'));
+    await tick(); // let ink's useInput effect resubscribe with the now-loaded closure
+    await press(stdin, '\r'); // confirms the preselected provider
+
+    expect(lastFrame()).toContain('Select model — OpenCode Zen');
+  });
+
   it('scrolls a long OpenCode model list instead of showing every entry at once', async () => {
     const models = Array.from({ length: 20 }, (_, index) => `provider/model-${index}`);
     listOpenCodeModels.mockResolvedValue(models);

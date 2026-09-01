@@ -1,6 +1,6 @@
 {
   "name": "@losina/daemon-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "IPC client for the ARCH daemon, with auto-start support.",
   "license": "MIT",
   "type": "module",

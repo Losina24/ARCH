@@ -1,6 +1,6 @@
 {
   "name": "@losina/daemon",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "ARCH orchestrator daemon: definition/implementation phases, task lifecycle, persistence.",
   "license": "MIT",
   "type": "module",

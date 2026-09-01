@@ -1,6 +1,6 @@
 {
   "name": "@losina/arch-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "archctl — the ARCH orchestration CLI.",
   "license": "MIT",
   "type": "module",
@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@losina/config": "workspace:*",
+    "@losina/core": "workspace:*",
     "@losina/daemon": "workspace:*",
     "@losina/daemon-client": "workspace:*",
     "commander": "^12.1.0"

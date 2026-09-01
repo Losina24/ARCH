@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ClaudeApiRejectionError,
@@ -603,6 +603,54 @@ describe('crash cleanup and console visibility (useWorktrees: false)', () => {
 
     await expect(access(join(repo.cwd, 'partial.txt'))).rejects.toThrow();
     await expect(readFile(join(repo.cwd, 'b.txt'), 'utf-8')).resolves.toBe('TASK-B\n');
+  });
+});
+
+describe('implementation-loop recovery when a crashed task cannot even revert its own files', () => {
+  it('still reaches phase "blocked" and releases the abort controller, instead of leaving the run stuck forever', async () => {
+    await daemon.client.setConfig({ useWorktrees: false, maxConcurrency: 1 });
+
+    runtime?.queuePlan({
+      projectMarkdown: '# Brief',
+      tasks: [{ id: 'TASK-001', title: 'Crashes mid-execution, taking git down with it' }],
+    });
+    // Mirrors the real incident: the worker crashes, and the repo it was working in is no
+    // longer a git repository by the time the cleanup path tries `git status` on it — so
+    // revertOwnFiles() itself throws. Before the fix, that second failure escaped
+    // runTlTaskCycle's catch uncaught, crashed the whole implementation-phase loop, and left
+    // the RunManager believing the loop was still alive forever.
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      await writeFile(join(cwd, 'partial.txt'), 'partial\n', 'utf-8');
+      await rm(join(cwd, '.git'), { recursive: true, force: true });
+      throw new Error('worker aborted mid-stream (exit code 143)');
+    });
+
+    const taskFailed = waitForEvent(
+      daemon.client,
+      (event) =>
+        event.type === 'task:status-changed' &&
+        event.taskId === 'TASK-001' &&
+        event.status === 'failed',
+      15000,
+    );
+    const runBlocked = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
+      15000,
+    );
+    const run = await createAndApprove('Do one thing that will crash');
+    await taskFailed;
+    await runBlocked;
+
+    const refreshed = await daemon.client.getRun({ runId: run.runId });
+    expect(refreshed.phase).toBe('blocked');
+
+    // The abort controller must have been released alongside the phase flip — otherwise a
+    // human message sent via retryTask would be queued for a loop that no longer exists and
+    // silently lost forever. abortRun only succeeds while a controller is registered.
+    await expect(daemon.client.abortRun({ runId: run.runId })).rejects.toThrow(
+      /has no active work to abort/,
+    );
   });
 });
 

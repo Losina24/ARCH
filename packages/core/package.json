@@ -1,6 +1,6 @@
 {
   "name": "@losina/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DAG, git, and state helpers shared across ARCH packages.",
   "license": "MIT",
   "type": "module",

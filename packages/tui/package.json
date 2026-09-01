@@ -1,6 +1,6 @@
 {
   "name": "@losina/arch-terminal",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "arch-terminal — the ARCH terminal UI.",
   "license": "MIT",
   "type": "module",

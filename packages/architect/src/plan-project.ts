@@ -2,9 +2,23 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runAgentHeadless } from '@losina/agent-runtime';
 import { getArchPaths } from '@losina/config';
-import { loadTasksIndex } from '@losina/core';
+import { discoverReposIn, loadTasksIndex, resolveRepoRoot } from '@losina/core';
 import type { RunMeta, RunPlan } from '@losina/schemas';
 import { buildPlanPrompt, buildRefinePlanPrompt } from './prompts.js';
+
+/**
+ * The repos the Architect should know about for this run: empty when `run.cwd` is itself a
+ * single repository (nothing extra to say — every task just omits `repoRoot`), or the list of
+ * git repos found as immediate subdirectories when `run.cwd` is a plain container folder.
+ */
+async function discoverReposForPrompt(cwd: string): Promise<string[]> {
+  try {
+    await resolveRepoRoot(cwd);
+    return [];
+  } catch {
+    return discoverReposIn(cwd);
+  }
+}
 
 export interface PlanProjectInput {
   run: RunMeta;
@@ -26,11 +40,13 @@ export async function planProject(input: PlanProjectInput): Promise<PlanProjectO
   const tasksIndexPath = join(runDir, 'tasks-index.yaml');
   const tasksDirPath = join(runDir, 'tasks');
 
+  const repos = await discoverReposForPrompt(run.cwd);
   const promptInput = {
     run,
     projectMarkdownPath,
     tasksIndexPath,
     tasksDirPath,
+    repos,
   };
 
   const prompt = input.feedback

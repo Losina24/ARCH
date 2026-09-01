@@ -83,6 +83,9 @@ importers:
       '@losina/config':
         specifier: workspace:*
         version: link:../config
+      '@losina/core':
+        specifier: workspace:*
+        version: link:../core
       '@losina/daemon':
         specifier: workspace:*
         version: link:../daemon

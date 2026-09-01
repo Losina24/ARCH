@@ -17,12 +17,22 @@ export interface RunHeadlessOptions {
 export interface RunHeadlessResult {
   sessionId: string;
   output: string;
+  /** Cumulative input tokens across every event in the stream that reported usage, if any. */
+  inputTokens?: number;
+  /** Cumulative output tokens across every event in the stream that reported usage, if any. */
+  outputTokens?: number;
 }
 
 interface OpencodeJsonlEvent {
   type: string;
   sessionID?: string;
-  part?: { type?: string; text?: string; reason?: string };
+  part?: {
+    type?: string;
+    text?: string;
+    reason?: string;
+    usage?: { inputTokens?: number; outputTokens?: number };
+  };
+  usage?: { inputTokens?: number; outputTokens?: number };
   error?: { name?: string; data?: { message?: string } };
 }
 
@@ -96,6 +106,26 @@ function sessionIdOf(events: OpencodeJsonlEvent[]): string | undefined {
 function lastTextOf(events: OpencodeJsonlEvent[]): string | undefined {
   const textEvents = events.filter((event) => event.type === 'text' && event.part?.type === 'text');
   return textEvents.at(-1)?.part?.text;
+}
+
+/** Accumulates token usage reported on `text`/`usage` events (`part.usage` or a top-level `usage`). */
+function tokenUsageOf(events: OpencodeJsonlEvent[]): {
+  inputTokens?: number;
+  outputTokens?: number;
+} {
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  for (const event of events) {
+    const usage = event.part?.usage ?? (event.type === 'usage' ? event.usage : undefined);
+    if (!usage) continue;
+    if (typeof usage.inputTokens === 'number') {
+      inputTokens = (inputTokens ?? 0) + usage.inputTokens;
+    }
+    if (typeof usage.outputTokens === 'number') {
+      outputTokens = (outputTokens ?? 0) + usage.outputTokens;
+    }
+  }
+  return { inputTokens, outputTokens };
 }
 
 function errorEventOf(events: OpencodeJsonlEvent[]): OpencodeJsonlEvent | undefined {
@@ -197,5 +227,6 @@ export async function runOpencodeHeadless(options: RunHeadlessOptions): Promise<
   return {
     sessionId,
     output: lastTextOf(events) ?? '',
+    ...tokenUsageOf(events),
   };
 }

@@ -17,6 +17,7 @@ const planInput = {
   projectMarkdownPath: '/home/user/.arch/projects/project-abc12345/runs/run-1/project.md',
   tasksIndexPath: '/home/user/.arch/projects/project-abc12345/runs/run-1/tasks-index.yaml',
   tasksDirPath: '/home/user/.arch/projects/project-abc12345/runs/run-1/tasks',
+  repos: [] as string[],
 };
 
 const taskId = 'TASK-001';
@@ -29,6 +30,21 @@ describe('buildPlanPrompt', () => {
     expect(prompt).toContain(planInput.tasksIndexPath);
     expect(prompt).toContain(planInput.tasksDirPath);
     expect(prompt.trim().endsWith('PLAN_READY')).toBe(true);
+  });
+
+  it('says nothing about repositories when there is only a single one', () => {
+    const prompt = buildPlanPrompt(planInput);
+    expect(prompt).not.toContain('Repositories available');
+  });
+
+  it('lists every discovered repo and instructs one repoRoot per task when there are several', () => {
+    const prompt = buildPlanPrompt({
+      ...planInput,
+      repos: ['/workspace/service-a', '/workspace/service-b'],
+    });
+    expect(prompt).toContain('Repositories available');
+    expect(prompt).toContain('/workspace/service-a');
+    expect(prompt).toContain('/workspace/service-b');
   });
 });
 

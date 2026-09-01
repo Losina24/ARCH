@@ -6,6 +6,11 @@ const TASKS_INDEX_SCHEMA = `tasks:
     status: pending          # always "pending" for new tasks
     dependsOn: []             # ids of tasks that must be "done" first
     file: tasks/TASK-001.md   # path to the task file, relative to the run directory
+    repoRoot: /abs/path       # OPTIONAL. Absolute path to the git repository this task modifies.
+                              # Omit entirely for a single-repo project. Required when several
+                              # repositories are available (see "Repositories" below) — must be
+                              # one of the exact paths listed there, and a task must only touch
+                              # files inside that one repository.
     correctionFiles: []       # always [] for new tasks
     retries: 0                # always 0 for new tasks
     checks:                   # commands that verify the Definition of Done, run from the repo root
@@ -21,13 +26,24 @@ interface PlanPromptInput {
   projectMarkdownPath: string;
   tasksIndexPath: string;
   tasksDirPath: string;
+  /**
+   * Absolute paths to the git repositories available for this run. Empty when `run.cwd` is
+   * itself a single repository (the common case) — nothing extra to tell the Architect then,
+   * every task simply omits `repoRoot`.
+   */
+  repos: string[];
+}
+
+function buildRepositoriesSection(repos: string[]): string {
+  if (repos.length === 0) return '';
+  return `\n\nRepositories available for this run (each task's "repoRoot" must be exactly one of these paths — a single task must not touch files in more than one repository; split it into dependent tasks if it genuinely needs to):\n${repos.map((repo) => `- ${repo}`).join('\n')}`;
 }
 
 export function buildPlanPrompt(input: PlanPromptInput): string {
-  const { run, projectMarkdownPath, tasksIndexPath, tasksDirPath } = input;
+  const { run, projectMarkdownPath, tasksIndexPath, tasksDirPath, repos } = input;
   return `You are the ARCHITECT agent of ARCH, an autonomous multi-agent software engineering system. This system will be used to read the requirements of a project, analyze the codebase, generate a really good implementation plan, divide the plan in a DAG of tasks, and implement the tasks.
 
-Your ONLY job right now is the Definition phase: turn the user's request below into a concrete implementation plan for this repository. You must NOT write, edit, or refactor any application or source code, and you must NOT modify any file outside of "${projectMarkdownPath}", "${tasksIndexPath}" and files under "${tasksDirPath}/" — these are absolute paths outside this repository, in ARCH's own run storage; you have been granted access to write there. Explore the repository (or the repositories if you identify that there is something usefull in another one) as needed (read files, run read-only commands) to ground the plan in how this codebase actually works.
+Your ONLY job right now is the Definition phase: turn the user's request below into a concrete implementation plan for this repository. You must NOT write, edit, or refactor any application or source code, and you must NOT modify any file outside of "${projectMarkdownPath}", "${tasksIndexPath}" and files under "${tasksDirPath}/" — these are absolute paths outside this repository, in ARCH's own run storage; you have been granted access to write there. Explore the repository (or the repositories if you identify that there is something usefull in another one) as needed (read files, run read-only commands) to ground the plan in how this codebase actually works.${buildRepositoriesSection(repos)}
 
 User request:
 """
@@ -60,8 +76,8 @@ interface RefinePlanPromptInput extends PlanPromptInput {
 }
 
 export function buildRefinePlanPrompt(input: RefinePlanPromptInput): string {
-  const { projectMarkdownPath, tasksIndexPath, tasksDirPath, feedback } = input;
-  return `You are the ARCHITECT agent of ARCH. The user reviewed the plan you produced and asked for changes before approving it. This is still the Definition phase: you must NOT write, edit, or refactor any application or source code, and you must NOT modify any file outside of "${projectMarkdownPath}", "${tasksIndexPath}" and files under "${tasksDirPath}/".
+  const { projectMarkdownPath, tasksIndexPath, tasksDirPath, feedback, repos } = input;
+  return `You are the ARCHITECT agent of ARCH. The user reviewed the plan you produced and asked for changes before approving it. This is still the Definition phase: you must NOT write, edit, or refactor any application or source code, and you must NOT modify any file outside of "${projectMarkdownPath}", "${tasksIndexPath}" and files under "${tasksDirPath}/".${buildRepositoriesSection(repos)}
 
 User feedback:
 """

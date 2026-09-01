@@ -36,6 +36,7 @@ import {
 } from '@losina/validator';
 import type { Mutex } from './mutex.js';
 import { RunAbortedError } from './run-aborted-error.js';
+import { resolveTaskRepoRoot } from './task-repo-root.js';
 import { waitForReviewOutcome } from './wait-for-review-outcome.js';
 
 /**
@@ -68,7 +69,7 @@ const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
 const PROTECTED_BRANCH = 'develop';
 
 /**
- * Every other task's declared scope, for attributing a shared `run.cwd`'s dirty files to the
+ * Every other task's declared scope, for attributing a shared repo's dirty files to the
  * task that actually owns them. Deliberately sourced from the full `tasksIndex` rather than
  * only tasks currently in flight: without worktree isolation, an already-`done` task leaves its
  * approved work staged-but-uncommitted in that same shared directory (ARCH never auto-commits
@@ -152,6 +153,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
   } = params;
   const runId = run.runId;
   const agentId = workerAgentId(task.id);
+  const repoRoot = resolveTaskRepoRoot(run, task);
 
   const setStatus = async (status: Task['status'], failureReason?: string) => {
     task.status = status;
@@ -191,12 +193,12 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
       // Independent try/catches: a failure removing the worktree (e.g. it still has
       // uncommitted changes) must not prevent the branch deletion from being attempted too.
       try {
-        await removeWorktree(run.cwd, worktree);
+        await removeWorktree(repoRoot, worktree);
       } catch (removeError) {
         console.error(`[daemon] failed to remove worktree for ${task.id}:`, removeError);
       }
       try {
-        await deleteBranch(run.cwd, worktree);
+        await deleteBranch(repoRoot, worktree);
       } catch (deleteError) {
         console.error(`[daemon] failed to delete branch for ${task.id}:`, deleteError);
       }
@@ -206,7 +208,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
   };
 
   // Without worktree isolation, a task that ends in real failure must not leave its own
-  // uncommitted edits sitting dirty in the shared `run.cwd` — otherwise getChangedFiles'
+  // uncommitted edits sitting dirty in the shared repo — otherwise getChangedFiles'
   // repo-wide `git status` would keep attributing them to whichever sibling task checks its
   // scope next, forever. Re-derives "this task's files" the same way the scope check above
   // does (current dirty files minus whatever falls in another task's declared scope) rather
@@ -231,19 +233,19 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
     if (config.execution.useWorktrees) {
       const unlockCreate = await gitMutex.lock();
       try {
-        worktree = await createWorktree(run.cwd, worktreesDir, task.id);
+        worktree = await createWorktree(repoRoot, worktreesDir, task.id);
       } finally {
         unlockCreate();
       }
       // A fresh worktree only checks out tracked files, so a gitignored node_modules never
       // exists there — without this, every check that needs installed dependencies fails
       // no matter how correct the Worker's change is. Skipped entirely without worktrees:
-      // worktree.path is then run.cwd itself, the user's already-set-up project directory,
-      // shared by every concurrent task — reinstalling there on every task cycle would be
-      // wasteful and, for npm's rm -rf-then-reinstall ci, actively racy.
+      // worktree.path is then repoRoot itself, the user's already-set-up project directory,
+      // shared by every concurrent task in that same repo — reinstalling there on every task
+      // cycle would be wasteful and, for npm's rm -rf-then-reinstall ci, actively racy.
       await installWorktreeDependencies(worktree.path);
     } else {
-      worktree = { path: run.cwd, branch: '' };
+      worktree = { path: repoRoot, branch: '' };
     }
 
     while (true) {
@@ -296,7 +298,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
       throwIfAborted();
 
       // With worktree isolation every changed file belongs to this task. Without it,
-      // several tasks share `run.cwd`, so a file must first be attributed to this task
+      // several tasks can share the same repo, so a file must first be attributed to this task
       // by excluding whatever falls inside another task's declared scope — otherwise a
       // sibling's still in-progress edit, or an already-`done` sibling's approved work that
       // ARCH deliberately left uncommitted, would look like a scope violation of this task.
@@ -321,6 +323,14 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
             );
             await revertOwnFiles();
             await cleanupWorktree();
+            bus.emit({
+              type: 'agent:activity',
+              runId,
+              agentId,
+              role: 'worker',
+              taskId: task.id,
+              state: 'failed',
+            });
             return;
           }
           task.retries += 1;
@@ -367,6 +377,14 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
           );
           await revertOwnFiles();
           await cleanupWorktree();
+          bus.emit({
+            type: 'agent:activity',
+            runId,
+            agentId,
+            role: 'worker',
+            taskId: task.id,
+            state: 'failed',
+          });
           return;
         }
 
@@ -375,6 +393,14 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
           await setStatus('failed', correctionText);
           await revertOwnFiles();
           await cleanupWorktree();
+          bus.emit({
+            type: 'agent:activity',
+            runId,
+            agentId,
+            role: 'worker',
+            taskId: task.id,
+            state: 'failed',
+          });
           return;
         }
         task.retries += 1;
@@ -436,17 +462,17 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
 
       if (outcome.approved) {
         // IMPORTANT: never auto-commit onto the user's real branch — see PROTECTED_BRANCH.
-        const targetBranch = await getCurrentBranch(run.cwd);
+        const targetBranch = await getCurrentBranch(repoRoot);
         const canAutoCommit = config.execution.useWorktrees && targetBranch !== PROTECTED_BRANCH;
 
         if (config.execution.useWorktrees) {
           // Committing inside the isolated worktree is always safe — that branch is ARCH's
-          // own `feat/<taskId>`, never the user's, regardless of what run.cwd is checked out to.
+          // own `feat/<taskId>`, never the user's, regardless of what repoRoot is checked out to.
           await commitAll(worktree.path, `${task.id}: ${task.title}`);
           if (canAutoCommit) {
             const unlockMerge = await gitMutex.lock();
             try {
-              await mergeWorktree(run.cwd, worktree);
+              await mergeWorktree(repoRoot, worktree);
             } finally {
               unlockMerge();
             }
@@ -463,7 +489,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
             );
           }
         } else {
-          // Without worktree isolation, worktree.path is run.cwd itself — the user's real,
+          // Without worktree isolation, worktree.path is repoRoot itself — the user's real,
           // already-checked-out branch. Stage the approved changes so they're easy to review,
           // but never commit them automatically.
           const unlockCommit = await gitMutex.lock();
@@ -489,6 +515,14 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
         );
         await revertOwnFiles();
         await cleanupWorktree();
+        bus.emit({
+          type: 'agent:activity',
+          runId,
+          agentId,
+          role: 'worker',
+          taskId: task.id,
+          state: 'failed',
+        });
         return;
       }
       task.retries += 1;
@@ -513,7 +547,16 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
       // Only once the task is truly abandoned (not paused for a human to resume it in the
       // same session) — otherwise whatever the worker wrote before crashing would vanish out
       // from under a session it's meant to pick back up.
-      await revertOwnFiles();
+      //
+      // This can itself throw (e.g. the same broken cwd that crashed the task in the first
+      // place also breaks `git status` here) — it must not escape and take down the whole
+      // implementation-phase loop for the run, leaving other in-flight tasks' status changes
+      // unreported and the RunManager thinking this run's loop is still alive indefinitely.
+      try {
+        await revertOwnFiles();
+      } catch (revertError) {
+        console.error(`[daemon] failed to revert ${task.id}'s own files after crash:`, revertError);
+      }
     }
     await cleanupWorktree();
     bus.emit({

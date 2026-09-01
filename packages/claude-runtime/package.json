@@ -1,6 +1,6 @@
 {
   "name": "@losina/claude-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Headless invocation of the Claude Code CLI for ARCH agents.",
   "license": "MIT",
   "type": "module",

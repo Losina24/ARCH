@@ -13,6 +13,7 @@ export interface PlanTaskSpec {
   checks?: CheckDefinition[];
   markdown?: string;
   scope?: string[];
+  repoRoot?: string;
 }
 
 export interface PlanSpec {
@@ -139,6 +140,7 @@ export class FakeClaudeRuntime {
       retries: 0,
       checks: task.checks ?? [],
       scope: task.scope ?? [],
+      ...(task.repoRoot ? { repoRoot: task.repoRoot } : {}),
     }));
     await writeFile(join(runDir, 'tasks-index.yaml'), stringify({ tasks }), 'utf-8');
 

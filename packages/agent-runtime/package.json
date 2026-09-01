@@ -1,6 +1,6 @@
 {
   "name": "@losina/agent-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Routes ARCH's headless agent dispatch to Claude Code, Codex, or OpenCode CLI based on the configured model.",
   "license": "MIT",
   "type": "module",

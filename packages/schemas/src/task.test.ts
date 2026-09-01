@@ -82,6 +82,16 @@ describe('TaskSchema', () => {
       'The following checks failed and must be fixed:\n\n### lint\nexit code 1',
     );
   });
+
+  it('parses a task without a repoRoot', () => {
+    const task = TaskSchema.parse(validTask);
+    expect(task.repoRoot).toBeUndefined();
+  });
+
+  it('parses a task with an explicit repoRoot', () => {
+    const task = TaskSchema.parse({ ...validTask, repoRoot: '/repos/service-a' });
+    expect(task.repoRoot).toBe('/repos/service-a');
+  });
 });
 
 describe('TasksIndexSchema', () => {

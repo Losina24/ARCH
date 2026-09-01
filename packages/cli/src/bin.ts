@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { getArchPaths } from '@losina/config';
+import { resolveRunCwd } from '@losina/core';
 import { isDaemonAlive } from '@losina/daemon';
 import { withClient } from '@losina/daemon-client';
 import { Command } from 'commander';
@@ -18,6 +19,19 @@ interface ConfigSetOptions extends CwdOption {
 
 const program = new Command();
 program.name('archctl').description('ARCH orchestration CLI').version('0.1.0');
+
+// Every subcommand accepts --cwd, defaulting to process.cwd() — resolve it once, here, before
+// any action runs. Without this, invoking archctl from outside a git repository (or from a
+// subdirectory) silently threads a non-repo-root path through to createRun/getArchPaths,
+// surfacing only later as an opaque "fatal: not a git repository" deep in the task pipeline.
+// `resolveRunCwd` also accepts a plain folder containing several repos as immediate
+// subdirectories (rather than being a repo itself) — each task then picks its own repo.
+program.hook('preAction', async (_thisCommand, actionCommand) => {
+  const opts = actionCommand.opts() as CwdOption;
+  if (typeof opts.cwd === 'string') {
+    opts.cwd = await resolveRunCwd(opts.cwd);
+  }
+});
 
 program
   .command('run')

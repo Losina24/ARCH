@@ -1,4 +1,5 @@
 import {
+  type AgentProvider,
   detectInstalledProvidersAsync,
   detectProvider,
   listOpenCodeModels,
@@ -18,16 +19,23 @@ interface ModelPickerModalProps {
 }
 
 interface ProviderDef {
-  key: 'claude' | 'codex' | 'opencode';
+  key: 'claude' | 'codex' | 'opencode' | 'opencode-zen';
   label: string;
   models: string[];
 }
 
-// Same three CLIs @losina/agent-runtime's detectProvider routes to. Claude/Codex's lists are a
-// handful of known ids plus a "Custom…" escape hatch — GPT ids ship often, so that list can never
-// be exhaustive either. OpenCode's placeholder model here is only the loading-state fallback: its
-// real list is fetched live via `listOpenCodeModels` since "provider/model" ids depend entirely on
-// which upstream provider the user has authenticated.
+// Same three CLIs @losina/agent-runtime's detectProvider routes to, plus a UI-only split of
+// OpenCode into its generic upstream-provider models and OpenCode Zen's own hosted catalog —
+// both dispatch through the same `opencode` binary (detectProvider only knows 'opencode'), so
+// the split exists purely to let Zen models show up without needing a live `opencode models`
+// fetch. Claude/Codex's lists are a handful of known ids plus a "Custom…" escape hatch — GPT ids
+// ship often, so that list can never be exhaustive either. Generic OpenCode's placeholder model
+// here is only the loading-state fallback: its real list is fetched live via `listOpenCodeModels`
+// since "provider/model" ids depend entirely on which upstream provider the user has
+// authenticated. Zen's list is curated by hand since its models are stable and don't require the
+// live fetch (see https://opencode.ai/docs/zen/) — handy when the CLI is authenticated only via
+// `{env:OPENCODE_API_KEY}` in opencode.json (e.g. on a headless EC2/Fargate box) rather than
+// through an interactive `opencode auth login`, where the live fetch may not have run yet.
 const ALL_PROVIDERS: ProviderDef[] = [
   {
     key: 'claude',
@@ -44,11 +52,35 @@ const ALL_PROVIDERS: ProviderDef[] = [
     label: 'OpenCode',
     models: ['github-copilot/gpt-4.1'],
   },
+  {
+    key: 'opencode-zen',
+    label: 'OpenCode Zen',
+    models: [
+      'opencode/grok-code',
+      'opencode/kimi-k2',
+      'opencode/glm-4.6',
+      'opencode/qwen3-coder',
+      'opencode/gpt-oss-120b',
+    ],
+  },
 ];
+
+// The Zen namespace ("opencode/<model>") is reserved by OpenCode's own hosted catalog, so it's an
+// unambiguous split from every other "provider/model" id detectProvider also routes to 'opencode'.
+const OPENCODE_ZEN_PREFIX = 'opencode/';
 
 type Provider = ProviderDef;
 type ProviderKey = Provider['key'];
 type Stage = 'provider' | 'model' | 'custom';
+
+// Mirrors detectProvider, but further splits its single 'opencode' result into the two rows this
+// modal shows. Used only for picking which row a model id "belongs to" (home highlighting,
+// filtering) — actual dispatch still goes through detectProvider, which doesn't need the split.
+function uiProviderKeyFor(model: string): ProviderKey {
+  const provider = detectProvider(model);
+  if (provider !== 'opencode') return provider;
+  return model.startsWith(OPENCODE_ZEN_PREFIX) ? 'opencode-zen' : 'opencode';
+}
 
 const CUSTOM = 'Custom…';
 
@@ -56,8 +88,15 @@ const CUSTOM = 'Custom…';
 // provider in the list even when undetected, so a configured-but-uninstalled provider stays
 // visible and editable instead of vanishing from under the current selection. OpenCode's models
 // are swapped for the live-detected list whenever that fetch found any.
+// installed is keyed by AgentProvider (detectInstalledProvidersAsync only knows the three CLI
+// binaries) — 'opencode-zen' rides on the same 'opencode' binary, so it's installed exactly when
+// that binary is.
+function isInstalled(installed: Set<AgentProvider>, key: ProviderKey): boolean {
+  return key === 'opencode-zen' ? installed.has('opencode') : installed.has(key);
+}
+
 function visibleProvidersFor(
-  installed: Set<ProviderKey>,
+  installed: Set<AgentProvider>,
   currentValue: string,
   opencodeModels: string[],
 ): Provider[] {
@@ -66,9 +105,9 @@ function visibleProvidersFor(
       ? { ...provider, models: opencodeModels }
       : provider,
   );
-  const homeKey = detectProvider(currentValue);
+  const homeKey = uiProviderKeyFor(currentValue);
   const filtered = providers.filter(
-    (provider) => installed.has(provider.key) || provider.key === homeKey,
+    (provider) => isInstalled(installed, provider.key) || provider.key === homeKey,
   );
   return filtered.length > 0 ? filtered : providers;
 }
@@ -77,7 +116,7 @@ const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 const SPINNER_INTERVAL_MS = 80;
 
 function providerIndexFor(providers: Provider[], model: string): number {
-  const key = detectProvider(model);
+  const key = uiProviderKeyFor(model);
   const index = providers.findIndex((provider) => provider.key === key);
   return index === -1 ? 0 : index;
 }

@@ -193,6 +193,17 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
       await Promise.allSettled([...inFlight.values()]);
       return;
     }
+    // Anything else (e.g. a per-task crash whose own cleanup itself throws) must not leave the
+    // RunManager believing this run's loop is still alive: retryTask() and run.abort both decide
+    // what to do next purely from getAbortController(runId), and a message queued via
+    // queueRetry() while that's true is only ever drained back at the top of this same loop — if
+    // the loop is dead but the controller lingers, the message (and the "queued" success the
+    // caller sees) is silently lost forever. Clear it and mark the run actionable before
+    // rethrowing so the failure is still logged by the caller.
+    runManager.clearAbortController(runId);
+    const updated = runManager.update(runId, { phase: 'blocked' });
+    await persistRunMeta(archDir, updated);
+    handle.broadcast({ type: 'run:status-changed', runId, phase: 'blocked' });
     throw error;
   } finally {
     await architectLoop.stop();

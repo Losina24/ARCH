@@ -39,9 +39,10 @@ async function createRun(
   payload: RunCreateRequest,
 ): Promise<RunMeta> {
   const now = new Date().toISOString();
+  const title = payload.prompt.replace(/\s+/g, ' ').trim().slice(0, 80);
   const run: RunMeta = {
     runId: randomUUID(),
-    title: payload.prompt.slice(0, 80),
+    title,
     prompt: payload.prompt,
     cwd: payload.cwd,
     phase: 'grilling',
