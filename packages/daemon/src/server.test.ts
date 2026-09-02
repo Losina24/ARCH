@@ -97,6 +97,26 @@ describe('startDaemonServer', () => {
     socketB.end();
   });
 
+  it('survives a client disconnect racing with a broadcast', async () => {
+    const onClientCountChange = vi.fn();
+    handle = await startDaemonServer(socketPath, async () => ({}), { onClientCountChange });
+
+    const disconnected = await connectSocket(socketPath);
+    const connected = await connectSocket(socketPath);
+    const event = readOneLine(connected);
+
+    disconnected.destroy();
+    expect(() =>
+      handle?.broadcast({ type: 'run:status-changed', runId: 'run-1', phase: 'done' }),
+    ).not.toThrow();
+
+    expect(await event).toEqual({
+      event: { type: 'run:status-changed', runId: 'run-1', phase: 'done' },
+    });
+    await vi.waitFor(() => expect(onClientCountChange).toHaveBeenLastCalledWith(1));
+    connected.end();
+  });
+
   it('reports the connected client count on every connect and disconnect', async () => {
     const onClientCountChange = vi.fn();
     handle = await startDaemonServer(socketPath, async () => ({}), { onClientCountChange });

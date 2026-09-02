@@ -1,7 +1,12 @@
 import { Box, measureElement } from 'ink';
 import type { DOMElement } from 'ink';
 import type { ReactNode } from 'react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+export interface ScrollMetrics {
+  contentHeight: number;
+  viewportHeight: number;
+}
 
 interface ScrollBoxProps {
   height: number;
@@ -32,5 +37,26 @@ export function ScrollBox({ height, scrollOffset, onContentHeight, children }: S
         {children}
       </Box>
     </Box>
+  );
+}
+
+interface TailScrollBoxProps {
+  height: number;
+  children: ReactNode;
+}
+
+/**
+ * Read-only viewport that always follows the end of growing output. Interactive consoles use the
+ * controlled ScrollBox directly; this variant is for compact side-by-side previews where the
+ * latest activity matters more than independent keyboard navigation.
+ */
+export function TailScrollBox({ height, children }: TailScrollBoxProps) {
+  const [contentHeight, setContentHeight] = useState(0);
+  const scrollOffset = Math.max(0, contentHeight - height);
+
+  return (
+    <ScrollBox height={height} scrollOffset={scrollOffset} onContentHeight={setContentHeight}>
+      {children}
+    </ScrollBox>
   );
 }

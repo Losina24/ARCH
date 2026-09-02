@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { runAgentHeadless } from '@losina/agent-runtime';
+import { type AgentProgressEvent, runAgentHeadless } from '@losina/agent-runtime';
 import { getArchPaths } from '@losina/config';
 import { discoverReposIn, loadTasksIndex, resolveRepoRoot } from '@losina/core';
 import type { RunMeta, RunPlan } from '@losina/schemas';
@@ -26,6 +26,7 @@ export interface PlanProjectInput {
   feedback?: string;
   resumeSessionId?: string;
   signal?: AbortSignal;
+  onProgress?: (progress: AgentProgressEvent) => void;
 }
 
 export interface PlanProjectOutput extends RunPlan {
@@ -61,6 +62,7 @@ export async function planProject(input: PlanProjectInput): Promise<PlanProjectO
     permissionMode: 'bypassPermissions',
     additionalDirs: [runDir],
     signal: input.signal,
+    onProgress: input.onProgress,
   });
 
   const [projectMarkdown, tasksIndex] = await Promise.all([

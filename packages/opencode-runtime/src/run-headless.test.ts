@@ -55,6 +55,33 @@ describe('runOpencodeHeadless', () => {
     expect(opts).toMatchObject({ cwd: '/tmp/project' });
   });
 
+  it('reports every JSONL event through onEvent', async () => {
+    const events = [
+      { type: 'step_start', sessionID: 'ses-1' },
+      {
+        type: 'tool_use',
+        sessionID: 'ses-1',
+        part: {
+          type: 'tool',
+          tool: 'bash',
+          state: { status: 'completed', input: { command: 'pnpm test' } },
+        },
+      },
+      { type: 'text', sessionID: 'ses-1', part: { type: 'text', text: 'done' } },
+    ];
+    mockStdout(jsonl(...events));
+    const onEvent = vi.fn();
+
+    await runOpencodeHeadless({
+      prompt: 'p',
+      model: 'github-copilot/gpt-4.1',
+      cwd: '/tmp',
+      onEvent,
+    });
+
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual(events);
+  });
+
   it('appends --agent plan for plan permission mode', async () => {
     mockStdout(jsonl({ type: 'text', sessionID: 'ses-1', part: { type: 'text', text: 'done' } }));
     await runOpencodeHeadless({

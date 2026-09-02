@@ -1,7 +1,7 @@
 import type { ArchMeshEvent } from '@losina/ipc';
 import type { Task } from '@losina/schemas';
 import { render } from 'ink-testing-library';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TaskDetailPanel } from './task-detail-panel.js';
 
 function task(overrides: Partial<Task>): Task {
@@ -26,6 +26,8 @@ const baseProps = {
   width: 80,
   height: 20,
   expanded: false,
+  scrollOffset: 0,
+  onScrollMetrics: () => undefined,
 };
 
 describe('TaskDetailPanel', () => {
@@ -110,5 +112,63 @@ describe('TaskDetailPanel', () => {
     expect(frame).toContain('Console');
     expect(frame).not.toContain('Task definition');
     expect(frame).not.toContain('Body');
+  });
+
+  it('keeps the compact task Console at its latest message as events arrive', async () => {
+    const workerActivity: ArchMeshEvent = {
+      type: 'agent:activity',
+      runId: 'run-1',
+      agentId: 'worker-TASK-001',
+      role: 'worker',
+      state: 'thinking',
+      taskId: 'TASK-001',
+    };
+    const messages = Array.from(
+      { length: 7 },
+      (_, index): ArchMeshEvent => ({
+        type: 'agent:message',
+        runId: 'run-1',
+        agentId: 'worker-TASK-001',
+        role: 'worker',
+        taskId: 'TASK-001',
+        text: `message-${index}`,
+      }),
+    );
+    const { lastFrame, rerender } = render(
+      <TaskDetailPanel
+        {...baseProps}
+        height={12}
+        task={task({})}
+        events={[workerActivity, ...messages]}
+      />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('message-6'));
+    expect(lastFrame()).not.toContain('message-0');
+    expect(lastFrame()).toContain('Task definition');
+    expect(lastFrame()).toContain('Body');
+
+    rerender(
+      <TaskDetailPanel
+        {...baseProps}
+        height={12}
+        task={task({})}
+        events={[
+          workerActivity,
+          ...messages,
+          {
+            type: 'agent:message',
+            runId: 'run-1',
+            agentId: 'worker-TASK-001',
+            role: 'worker',
+            taskId: 'TASK-001',
+            text: 'latest-message',
+          },
+        ]}
+      />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('latest-message'));
+    expect(lastFrame()).not.toContain('message-1');
   });
 });

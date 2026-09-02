@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { deriveAgentStatuses } from '../agent-status.js';
 import { type CommandHint, CommandHints } from '../components/command-hints.js';
 import { GradientText } from '../components/gradient-text.js';
-import { ScrollBox } from '../components/scroll-box.js';
+import { ScrollBox, type ScrollMetrics } from '../components/scroll-box.js';
 import { StatusBar } from '../components/status-bar.js';
 import { useTerminalColumns } from '../hooks/use-terminal-columns.js';
 import { useTerminalRows } from '../hooks/use-terminal-rows.js';
@@ -45,6 +45,9 @@ const GRILLING_ANSWER_ROWS = 4; // top margin + gradient box (3 rows)
 const AGENT_PROMPT_ROWS = 4; // top margin + gradient box (3 rows)
 const BLOCKED_MESSAGE_ROWS = 2; // top margin + the blocked-project warning line
 const MIN_BODY_ROWS = 3;
+// Ink 5 clears the entire terminal whenever rendered output is as tall as the TTY. Keeping one
+// row unused makes animated frames use its normal cursor-based redraw path instead.
+const RENDER_HEADROOM_ROWS = 1;
 
 function tabText(candidate: Tab, active: Tab): string {
   return candidate === active ? `› ${TAB_LABELS[candidate]} ‹` : `  ${TAB_LABELS[candidate]}  `;
@@ -111,7 +114,10 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [scrollOffset, setScrollOffset] = useState(0);
-  const [contentHeight, setContentHeight] = useState(0);
+  const [scrollMetrics, setScrollMetrics] = useState<ScrollMetrics>({
+    contentHeight: 0,
+    viewportHeight: 1,
+  });
   const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
   const [taskSelectMode, setTaskSelectMode] = useState(false);
   const [openTask, setOpenTask] = useState<Task | null>(null);
@@ -132,6 +138,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   // out of order relative to that history.
   const hydratedRef = useRef(false);
   const pendingLiveEventsRef = useRef<{ event: ArchMeshEvent; timestamp: number }[]>([]);
+  const followScrollTailRef = useRef(false);
 
   const tasks = plan?.tasksIndex.tasks ?? [];
   const selectedTask = tasks[selectedTaskIndex] ?? null;
@@ -467,7 +474,8 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     : selectedAgentId;
   const hasFailedTask = tasks.some((task) => task.status === 'failed');
   const hasAwaitingHumanTask = tasks.some((task) => task.status === 'awaiting_human');
-  const showBlockedMessage = tab === 'overview' && (hasFailedTask || hasAwaitingHumanTask);
+  const showBlockedMessage =
+    liveOpenTask === null && tab === 'overview' && (hasFailedTask || hasAwaitingHumanTask);
 
   const columns = useTerminalColumns();
   const rows = useTerminalRows();
@@ -483,34 +491,55 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     (showAgentPromptInput ? AGENT_PROMPT_ROWS : 0) +
     (showTaskConsoleInput ? AGENT_PROMPT_ROWS : 0) +
     (showBlockedMessage ? BLOCKED_MESSAGE_ROWS : 0);
-  const bodyHeight = Math.max(MIN_BODY_ROWS, rows - reservedRows);
-  const maxScrollOffset = Math.max(0, contentHeight - bodyHeight);
+  const bodyHeight = Math.max(MIN_BODY_ROWS, rows - reservedRows - RENDER_HEADROOM_ROWS);
+  const maxScrollOffset = Math.max(0, scrollMetrics.contentHeight - scrollMetrics.viewportHeight);
+  const scrollPageSize = Math.max(1, scrollMetrics.viewportHeight);
+  const scrollContextKey = liveOpenTask
+    ? `task:${liveOpenTask.id}:${taskConsoleExpanded ? 'console' : 'definition'}`
+    : tab === 'console'
+      ? `agent:${consoleDisplayedAgentId ?? 'none'}`
+      : tab;
+  const shouldFollowScrollTail =
+    (liveOpenTask !== null && taskConsoleExpanded) ||
+    (liveOpenTask === null && tab === 'console' && consoleDisplayedAgentId !== null);
+
+  const reportScrollMetrics = (metrics: ScrollMetrics) => {
+    const normalized = {
+      contentHeight: Math.max(0, metrics.contentHeight),
+      viewportHeight: Math.max(1, metrics.viewportHeight),
+    };
+    const nextMaxOffset = Math.max(0, normalized.contentHeight - normalized.viewportHeight);
+    setScrollMetrics((previous) =>
+      previous.contentHeight === normalized.contentHeight &&
+      previous.viewportHeight === normalized.viewportHeight
+        ? previous
+        : normalized,
+    );
+    setScrollOffset((offset) =>
+      followScrollTailRef.current ? nextMaxOffset : Math.min(offset, nextMaxOffset),
+    );
+  };
 
   useEffect(() => {
     setScrollOffset((offset) => Math.min(offset, maxScrollOffset));
   }, [maxScrollOffset]);
 
-  // Set on entry into the Console transcript (below) so the body opens at its bottom rather than
-  // its top. Left true afterwards as a one-shot safety net: the console's agent-select mode
-  // already previews the highlighted agent's transcript before Enter commits it, so by the time
-  // this ref is set, maxScrollOffset below is usually already correct for an immediate jump — but
-  // if it isn't yet (content still being measured), the follow-up effect catches up as soon as
-  // the real height lands, instead of jumping on a stale/unmeasured value.
-  const stickToBottomRef = useRef(false);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only reacts to a fresh content measurement, not to maxScrollOffset changing for other reasons (e.g. terminal resize)
+  // Every distinct pane gets its own natural starting edge. Logs open at the tail; plans, DAGs,
+  // and task definitions open at the top. reportScrollMetrics catches the later measurement of a
+  // freshly mounted pane and completes the tail jump without relying on stale dimensions.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollContextKey fully identifies the active pane; live size changes are handled by reportScrollMetrics.
   useEffect(() => {
-    if (!stickToBottomRef.current) return;
-    stickToBottomRef.current = false;
-    setScrollOffset(maxScrollOffset);
-  }, [contentHeight]);
+    followScrollTailRef.current = shouldFollowScrollTail;
+    setScrollOffset(shouldFollowScrollTail ? maxScrollOffset : 0);
+  }, [scrollContextKey]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resets the scroll position whenever the active tab, the open task page, or the selected Console agent changes, not on any other value read inside.
-  useEffect(() => {
-    const jumpToLatest = tab === 'console' && selectedAgentId !== null && !openTask;
-    stickToBottomRef.current = jumpToLatest;
-    setScrollOffset(jumpToLatest ? maxScrollOffset : 0);
-  }, [tab, openTask, selectedAgentId]);
+  const updateScrollOffset = (update: (offset: number) => number) => {
+    setScrollOffset((offset) => {
+      const next = Math.max(0, Math.min(maxScrollOffset, update(offset)));
+      if (shouldFollowScrollTail) followScrollTailRef.current = next === maxScrollOffset;
+      return next;
+    });
+  };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: resets task-select mode whenever the active tab changes, not on any value read inside
   useEffect(() => {
@@ -525,19 +554,19 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   useInput((input, key) => {
     if (openTask) {
       if (key.pageUp) {
-        setScrollOffset((offset) => Math.max(0, offset - bodyHeight));
+        updateScrollOffset((offset) => offset - scrollPageSize);
         return;
       }
       if (key.pageDown) {
-        setScrollOffset((offset) => Math.min(maxScrollOffset, offset + bodyHeight));
+        updateScrollOffset((offset) => offset + scrollPageSize);
         return;
       }
       if (key.upArrow) {
-        setScrollOffset((offset) => Math.max(0, offset - SCROLL_STEP));
+        updateScrollOffset((offset) => offset - SCROLL_STEP);
         return;
       }
       if (key.downArrow) {
-        setScrollOffset((offset) => Math.min(maxScrollOffset, offset + SCROLL_STEP));
+        updateScrollOffset((offset) => offset + SCROLL_STEP);
         return;
       }
 
@@ -611,19 +640,19 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     }
 
     if (key.pageUp) {
-      setScrollOffset((offset) => Math.max(0, offset - bodyHeight));
+      updateScrollOffset((offset) => offset - scrollPageSize);
       return;
     }
     if (key.pageDown) {
-      setScrollOffset((offset) => Math.min(maxScrollOffset, offset + bodyHeight));
+      updateScrollOffset((offset) => offset + scrollPageSize);
       return;
     }
     if (key.upArrow) {
-      setScrollOffset((offset) => Math.max(0, offset - SCROLL_STEP));
+      updateScrollOffset((offset) => offset - SCROLL_STEP);
       return;
     }
     if (key.downArrow) {
-      setScrollOffset((offset) => Math.min(maxScrollOffset, offset + SCROLL_STEP));
+      updateScrollOffset((offset) => offset + SCROLL_STEP);
       return;
     }
 
@@ -710,13 +739,16 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const arrowsSelectTasks = !openTask && tab === 'overview' && taskSelectMode && tasks.length > 0;
   const arrowsSelectAgents =
     !showAgentPromptInput && tab === 'console' && agentSelectMode && agents.length > 0;
-  if (contentHeight > bodyHeight) {
+  if (scrollMetrics.contentHeight > scrollMetrics.viewportHeight) {
     const from = scrollOffset + 1;
-    const to = Math.min(contentHeight, scrollOffset + bodyHeight);
+    const to = Math.min(scrollMetrics.contentHeight, scrollOffset + scrollMetrics.viewportHeight);
     commandHints.push(
       arrowsSelectTasks || arrowsSelectAgents
-        ? { key: 'PageUp/PageDown', label: `scroll (${from}-${to}/${contentHeight})` }
-        : { key: '↑/↓', label: `scroll (${from}-${to}/${contentHeight})` },
+        ? {
+            key: 'PageUp/PageDown',
+            label: `scroll (${from}-${to}/${scrollMetrics.contentHeight})`,
+          }
+        : { key: '↑/↓', label: `scroll (${from}-${to}/${scrollMetrics.contentHeight})` },
     );
   }
 
@@ -740,10 +772,10 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       <Box marginBottom={1}>
         <Text color={INACTIVE}>{'─'.repeat(width)}</Text>
       </Box>
-      <ScrollBox height={bodyHeight} scrollOffset={scrollOffset} onContentHeight={setContentHeight}>
-        {openTask ? (
+      <Box height={bodyHeight} overflow="hidden" alignItems="flex-start">
+        {liveOpenTask ? (
           <TaskDetailPanel
-            task={liveOpenTask ?? openTask}
+            task={liveOpenTask}
             content={taskFileContent}
             loading={taskFileLoading}
             error={taskFileError}
@@ -752,47 +784,58 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
             width={width}
             height={bodyHeight}
             expanded={taskConsoleExpanded}
+            scrollOffset={scrollOffset}
+            onScrollMetrics={reportScrollMetrics}
+          />
+        ) : tab === 'planification' ? (
+          <ScrollBox
+            height={bodyHeight}
+            scrollOffset={scrollOffset}
+            onContentHeight={(contentHeight) =>
+              reportScrollMetrics({ contentHeight, viewportHeight: bodyHeight })
+            }
+          >
+            {run.phase === 'grilling' && grillingQuestion ? (
+              <GrillingPanel
+                question={grillingQuestion.question}
+                recommendation={grillingQuestion.recommendation}
+                width={width}
+              />
+            ) : (
+              <PlanificationPanel
+                run={run}
+                plan={plan}
+                planError={planError}
+                config={config}
+                latestArchitectEvent={latestArchitectEvent}
+                revising={revising}
+                width={width}
+              />
+            )}
+          </ScrollBox>
+        ) : tab === 'overview' ? (
+          <ExecutionPanel
+            plan={plan}
+            events={events}
+            eventTimestamps={eventTimestamps}
+            width={width}
+            height={bodyHeight}
+            scrollOffset={scrollOffset}
+            onScrollMetrics={reportScrollMetrics}
+            selectedTaskId={taskSelectMode ? (selectedTask?.id ?? null) : null}
           />
         ) : (
-          <>
-            {tab === 'planification' &&
-              (run.phase === 'grilling' && grillingQuestion ? (
-                <GrillingPanel
-                  question={grillingQuestion.question}
-                  recommendation={grillingQuestion.recommendation}
-                  width={width}
-                />
-              ) : (
-                <PlanificationPanel
-                  run={run}
-                  plan={plan}
-                  planError={planError}
-                  config={config}
-                  latestArchitectEvent={latestArchitectEvent}
-                  revising={revising}
-                  width={width}
-                />
-              ))}
-            {tab === 'overview' && (
-              <ExecutionPanel
-                plan={plan}
-                events={events}
-                eventTimestamps={eventTimestamps}
-                width={width}
-                selectedTaskId={taskSelectMode ? (selectedTask?.id ?? null) : null}
-              />
-            )}
-            {tab === 'console' && (
-              <ConsolePanel
-                events={events}
-                eventTimestamps={eventTimestamps}
-                selectedAgentId={consoleDisplayedAgentId}
-                width={width}
-              />
-            )}
-          </>
+          <ConsolePanel
+            events={events}
+            eventTimestamps={eventTimestamps}
+            selectedAgentId={consoleDisplayedAgentId}
+            width={width}
+            height={bodyHeight}
+            scrollOffset={scrollOffset}
+            onScrollMetrics={reportScrollMetrics}
+          />
         )}
-      </ScrollBox>
+      </Box>
       {status && (
         <Box marginTop={1}>
           <Text dimColor>{status}</Text>

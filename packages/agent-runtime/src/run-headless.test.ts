@@ -66,13 +66,83 @@ describe('runAgentHeadless', () => {
     expect(mockedRunClaudeHeadless).not.toHaveBeenCalled();
     expect(mockedRunCodexHeadless).not.toHaveBeenCalled();
   });
+
+  it('normalizes live Codex events before reporting progress', async () => {
+    mockedRunCodexHeadless.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.started',
+        item: { type: 'command_execution', command: 'pnpm test --token SECRET' },
+      });
+      return { sessionId: 's', output: 'o' };
+    });
+    const onProgress = vi.fn();
+
+    await runAgentHeadless({
+      prompt: 'p',
+      model: 'gpt-5.6-sol',
+      cwd: '/tmp',
+      onProgress,
+    });
+
+    expect(onProgress).toHaveBeenCalledWith({
+      state: 'using-tool',
+      tool: 'Shell',
+      detail: 'Running tests',
+    });
+    expect(JSON.stringify(onProgress.mock.calls)).not.toContain('SECRET');
+  });
+
+  it('normalizes live Claude events before reporting progress', async () => {
+    mockedRunClaudeHeadless.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/tmp/src/app.ts' } }],
+        },
+      });
+      return { sessionId: 's', output: 'o' };
+    });
+    const onProgress = vi.fn();
+
+    await runAgentHeadless({ prompt: 'p', model: 'sonnet', cwd: '/tmp', onProgress });
+
+    expect(onProgress).toHaveBeenCalledWith({
+      state: 'using-tool',
+      tool: 'Read',
+      detail: 'Reading file',
+      file: 'src/app.ts',
+    });
+  });
+
+  it('normalizes live OpenCode events before reporting progress', async () => {
+    mockedRunOpencodeHeadless.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'step_start',
+        sessionID: 'ses-1',
+      });
+      return { sessionId: 's', output: 'o' };
+    });
+    const onProgress = vi.fn();
+
+    await runAgentHeadless({
+      prompt: 'p',
+      model: 'github-copilot/gpt-4.1',
+      cwd: '/tmp',
+      onProgress,
+    });
+
+    expect(onProgress).toHaveBeenCalledWith({
+      state: 'thinking',
+      detail: 'Analyzing next step',
+    });
+  });
 });
 
 describe('isTransientDispatchError', () => {
   it('is true for all providers transient error classes', async () => {
     const { ClaudeApiRejectionError, ClaudeStreamAbortedError } =
       await vi.importActual<typeof import('@losina/claude-runtime')>('@losina/claude-runtime');
-    const { CodexApiRejectionError, CodexStreamAbortedError } =
+    const { CodexApiRejectionError, CodexStreamAbortedError, CodexTimeoutError } =
       await vi.importActual<typeof import('@losina/codex-runtime')>('@losina/codex-runtime');
     const { OpencodeApiRejectionError, OpencodeStreamAbortedError } = await vi.importActual<
       typeof import('@losina/opencode-runtime')
@@ -84,6 +154,7 @@ describe('isTransientDispatchError', () => {
     );
     expect(isTransientDispatchError(new CodexApiRejectionError(4, 'x'))).toBe(true);
     expect(isTransientDispatchError(new CodexStreamAbortedError('x'))).toBe(true);
+    expect(isTransientDispatchError(new CodexTimeoutError(30 * 60_000))).toBe(true);
     expect(isTransientDispatchError(new OpencodeApiRejectionError('x'))).toBe(true);
     expect(isTransientDispatchError(new OpencodeStreamAbortedError('x'))).toBe(true);
   });
@@ -94,10 +165,10 @@ describe('isTransientDispatchError', () => {
 });
 
 describe('describeTransientDispatchFailure', () => {
-  it('describes a rejection vs an abort for every provider', async () => {
+  it('describes a rejection, abort, or timeout for every provider', async () => {
     const { ClaudeApiRejectionError, ClaudeStreamAbortedError } =
       await vi.importActual<typeof import('@losina/claude-runtime')>('@losina/claude-runtime');
-    const { CodexApiRejectionError, CodexStreamAbortedError } =
+    const { CodexApiRejectionError, CodexStreamAbortedError, CodexTimeoutError } =
       await vi.importActual<typeof import('@losina/codex-runtime')>('@losina/codex-runtime');
     const { OpencodeApiRejectionError, OpencodeStreamAbortedError } = await vi.importActual<
       typeof import('@losina/opencode-runtime')
@@ -117,6 +188,9 @@ describe('describeTransientDispatchFailure', () => {
     ).toBe('dispatch aborted mid-stream');
     expect(describeTransientDispatchFailure(new CodexStreamAbortedError('x'))).toBe(
       'dispatch aborted mid-stream',
+    );
+    expect(describeTransientDispatchFailure(new CodexTimeoutError(30 * 60_000))).toBe(
+      'dispatch timed out',
     );
     expect(describeTransientDispatchFailure(new OpencodeStreamAbortedError('x'))).toBe(
       'dispatch aborted mid-stream',

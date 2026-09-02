@@ -6,6 +6,7 @@ import {
   type RunHeadlessOptions,
   type RunHeadlessResult,
 } from '@losina/claude-runtime';
+import { CodexTimeoutError } from '@losina/codex-runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DaemonHarness, startDaemonHarness } from './support/daemon-harness.js';
 import { FakeClaudeRuntime } from './support/fake-claude-runtime.js';
@@ -279,6 +280,65 @@ describe('correction and retry', () => {
 });
 
 describe('human-driven retry', () => {
+  it('continues in a dirty worktree left by a crashed worker instead of recreating its branch', async () => {
+    runtime?.queuePlan({
+      projectMarkdown: '# Brief',
+      tasks: [{ id: 'TASK-001', title: 'Finish a partially written file' }],
+    });
+
+    let originalWorktree = '';
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      originalWorktree = cwd;
+      await writeFile(join(cwd, 'partial.txt'), 'first half\n', 'utf-8');
+      throw new Error('worker crashed after writing partial output');
+    });
+
+    const taskFailed = waitForEvent(
+      daemon.client,
+      (event) =>
+        event.type === 'task:status-changed' &&
+        event.taskId === 'TASK-001' &&
+        event.status === 'failed',
+      15000,
+    );
+    const runBlocked = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
+      15000,
+    );
+    const run = await createAndApprove('Finish a file even if the first worker crashes');
+    await taskFailed;
+    await runBlocked;
+
+    await expect(readFile(join(originalWorktree, 'partial.txt'), 'utf-8')).resolves.toBe(
+      'first half\n',
+    );
+
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      expect(cwd).toBe(originalWorktree);
+      const partial = await readFile(join(cwd, 'partial.txt'), 'utf-8');
+      await writeFile(join(cwd, 'partial.txt'), `${partial}second half\n`, 'utf-8');
+    });
+    runtime?.queueReview('TASK-001', 'approve');
+
+    const runDone = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+    await daemon.client.retryTask({
+      runId: run.runId,
+      taskId: 'TASK-001',
+      message: 'Continue from the partial work already present.',
+    });
+    await runDone;
+
+    await expect(readFile(join(repo.cwd, 'partial.txt'), 'utf-8')).resolves.toBe(
+      'first half\nsecond half\n',
+    );
+    expect(runtime?.workerCallCount('TASK-001')).toBe(2);
+  });
+
   it('resumes a failed task with a human note and completes it, unblocking a cascade-blocked dependent', async () => {
     await daemon.client.setConfig({ maxRetries: 0 });
 
@@ -721,17 +781,23 @@ describe('automatic api-error retry', () => {
   });
 });
 
-describe('automatic stream-abort retry', () => {
-  it('retries a worker dispatch the CLI cut off mid-stream, without counting it as a correction retry', async () => {
+describe('automatic Codex-timeout retry', () => {
+  it('continues partial work after a timeout without failing the task or spending a correction retry', async () => {
     runtime?.queuePlan({
       projectMarkdown: '# Brief',
       tasks: [{ id: 'TASK-001', title: 'Write greeting file' }],
     });
-    runtime?.queueWorker('TASK-001', async () => {
-      throw new ClaudeStreamAbortedError('aborted_streaming', 0.42, 15);
+
+    let originalWorktree = '';
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      originalWorktree = cwd;
+      await writeFile(join(cwd, 'greeting.txt'), 'hello', 'utf-8');
+      throw new CodexTimeoutError(30 * 60_000);
     });
     runtime?.queueWorker('TASK-001', async ({ cwd }) => {
-      await writeFile(join(cwd, 'greeting.txt'), 'hello from ARCH\n', 'utf-8');
+      expect(cwd).toBe(originalWorktree);
+      const partial = await readFile(join(cwd, 'greeting.txt'), 'utf-8');
+      await writeFile(join(cwd, 'greeting.txt'), `${partial} from ARCH\n`, 'utf-8');
     });
     runtime?.queueReview('TASK-001', 'approve');
 
@@ -746,6 +812,45 @@ describe('automatic stream-abort retry', () => {
     const plan = await daemon.client.getRunPlan({ runId: run.runId });
     expect(plan?.tasksIndex.tasks[0]).toMatchObject({ status: 'done', retries: 0 });
     expect(runtime?.workerCallCount('TASK-001')).toBe(2);
+    await expect(readFile(join(repo.cwd, 'greeting.txt'), 'utf-8')).resolves.toBe(
+      'hello from ARCH\n',
+    );
+  });
+});
+
+describe('automatic stream-abort retry', () => {
+  it('retries in the same worktree after a CLI interruption, preserving partial work without counting a correction retry', async () => {
+    runtime?.queuePlan({
+      projectMarkdown: '# Brief',
+      tasks: [{ id: 'TASK-001', title: 'Write greeting file' }],
+    });
+    let originalWorktree = '';
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      originalWorktree = cwd;
+      await writeFile(join(cwd, 'greeting.txt'), 'hello', 'utf-8');
+      throw new ClaudeStreamAbortedError('aborted_streaming', 0.42, 15);
+    });
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      expect(cwd).toBe(originalWorktree);
+      const partial = await readFile(join(cwd, 'greeting.txt'), 'utf-8');
+      await writeFile(join(cwd, 'greeting.txt'), `${partial} from ARCH\n`, 'utf-8');
+    });
+    runtime?.queueReview('TASK-001', 'approve');
+
+    const runDone = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+    const run = await createAndApprove('Write a greeting file');
+    await runDone;
+
+    const plan = await daemon.client.getRunPlan({ runId: run.runId });
+    expect(plan?.tasksIndex.tasks[0]).toMatchObject({ status: 'done', retries: 0 });
+    expect(runtime?.workerCallCount('TASK-001')).toBe(2);
+    await expect(readFile(join(repo.cwd, 'greeting.txt'), 'utf-8')).resolves.toBe(
+      'hello from ARCH\n',
+    );
   });
 
   it('marks a task as failed with a short failure reason once the stream-abort retry budget is exhausted', async () => {

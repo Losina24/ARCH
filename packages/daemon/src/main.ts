@@ -219,6 +219,7 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
   // breaks the circularity: it can be captured immediately and forwards once `handleRef.current`
   // is assigned right after startDaemonServer returns.
   const handleRef: { current?: DaemonServerHandle } = {};
+  let isClosing = false;
 
   // Serialized per run so concurrent appendRunEvent calls for the same run can't interleave their
   // writes — appendFile is atomic per call, but awaiting each broadcast before the next starts
@@ -251,6 +252,7 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
       handleRef.current?.broadcast(event);
     },
     close: async () => {
+      isClosing = true;
       // Otherwise a shutdown scheduled while this instance was still alive (e.g. the last
       // client disconnected right before this call) fires its process.exit(0) after close()
       // has already resolved — killing whatever else is running in this process by then.
@@ -288,7 +290,9 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
 
   const maybeScheduleIdleShutdown = () => {
     cancelIdleShutdown();
-    if (clientCount > 0 || runManager.hasActiveWork()) return;
+    // Closing the server itself closes its sockets, which reports a late zero-client count.
+    // Never let that teardown notification schedule process.exit() after an explicit close.
+    if (isClosing || clientCount > 0 || runManager.hasActiveWork()) return;
     idleShutdownTimer = setTimeout(() => {
       if (clientCount === 0 && !runManager.hasActiveWork()) {
         void handle.close().finally(() => process.exit(0));

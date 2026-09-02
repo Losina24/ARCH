@@ -25,6 +25,14 @@ interface ArchitectStatus {
   spinner: boolean;
 }
 
+function liveActivityLabel(event: AgentActivityEvent): string | undefined {
+  const detail =
+    event.detail ??
+    (event.state === 'using-tool' && event.tool ? `Using ${event.tool}` : undefined);
+  if (!detail) return undefined;
+  return event.file ? `${detail} · ${event.file}` : detail;
+}
+
 function architectStatus(
   run: RunMeta,
   plan: RunPlan | null,
@@ -45,6 +53,8 @@ function architectStatus(
     // latestEvent can still hold the previous round's stale "completed" state
     // right after feedback is submitted, before the next spawning/thinking
     // event arrives — fall back to a generic label rather than showing that.
+    const activity = latestEvent ? liveActivityLabel(latestEvent) : undefined;
+    if (activity) return { message: `Architect · ${activity}…`, color: WARNING, spinner: true };
     const label =
       latestEvent && latestEvent.state !== 'completed'
         ? latestEvent.state.replace('-', ' ')
@@ -59,6 +69,10 @@ function architectStatus(
     };
   }
   if (latestEvent) {
+    const activity = liveActivityLabel(latestEvent);
+    if (activity) {
+      return { message: `Architect · ${activity}…`, color: WARNING, spinner: true };
+    }
     return {
       message: `Architect is ${latestEvent.state.replace('-', ' ')}…`,
       color: WARNING,

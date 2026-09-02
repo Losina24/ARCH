@@ -112,12 +112,14 @@ describe('runGrillingRound', () => {
   it('forwards model, cwd, resumeSessionId and signal to runAgentHeadless', async () => {
     mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-3', output: 'GRILLING_DONE' });
     const controller = new AbortController();
+    const onProgress = vi.fn();
 
     await runGrillingRound({
       run,
       model: 'opus',
       resumeSessionId: 'previous-session',
       signal: controller.signal,
+      onProgress,
     });
 
     const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
@@ -126,6 +128,7 @@ describe('runGrillingRound', () => {
       cwd,
       resumeSessionId: 'previous-session',
       signal: controller.signal,
+      onProgress,
       permissionMode: 'bypassPermissions',
     });
   });

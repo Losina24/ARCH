@@ -10,6 +10,8 @@ export interface RunHeadlessOptions {
   resumeSessionId?: string;
   permissionMode?: PermissionMode;
   signal?: AbortSignal;
+  /** Receives each raw JSON event as soon as OpenCode writes its JSONL line. */
+  onEvent?: (event: OpencodeJsonlEvent) => void;
   /** Extra directories the session may read/write outside `cwd`. See the guard below. */
   additionalDirs?: string[];
 }
@@ -23,13 +25,21 @@ export interface RunHeadlessResult {
   outputTokens?: number;
 }
 
-interface OpencodeJsonlEvent {
+export interface OpencodeToolState {
+  status?: string;
+  input?: unknown;
+  error?: string;
+}
+
+export interface OpencodeJsonlEvent {
   type: string;
   sessionID?: string;
   part?: {
     type?: string;
     text?: string;
     reason?: string;
+    tool?: string;
+    state?: OpencodeToolState;
     usage?: { inputTokens?: number; outputTokens?: number };
   };
   usage?: { inputTokens?: number; outputTokens?: number };
@@ -97,6 +107,67 @@ function parseJsonlEvents(stdout: unknown): OpencodeJsonlEvent[] {
     }
   }
   return events;
+}
+
+interface JsonlReadable {
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+function isJsonlReadable(value: unknown): value is JsonlReadable {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { on?: unknown }).on === 'function'
+  );
+}
+
+function notifyEvent(
+  listener: ((event: OpencodeJsonlEvent) => void) | undefined,
+  event: OpencodeJsonlEvent,
+): void {
+  if (!listener) return;
+  try {
+    listener(event);
+  } catch {
+    // Progress reporting is observational: a UI callback must never terminate the agent turn.
+  }
+}
+
+function observeJsonlEvents(
+  stdout: unknown,
+  listener: ((event: OpencodeJsonlEvent) => void) | undefined,
+): boolean {
+  if (!listener || !isJsonlReadable(stdout)) return false;
+
+  let pending = '';
+  const consumeLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      notifyEvent(listener, JSON.parse(trimmed) as OpencodeJsonlEvent);
+    } catch {
+      // Ignore banners or other non-JSON noise without interrupting the CLI.
+    }
+  };
+
+  stdout.on('data', (chunk) => {
+    pending += String(chunk ?? '');
+    const lines = pending.split('\n');
+    pending = lines.pop() ?? '';
+    for (const line of lines) consumeLine(line);
+  });
+  stdout.on('end', () => {
+    consumeLine(pending);
+    pending = '';
+  });
+  return true;
+}
+
+function replayEvents(
+  stdout: unknown,
+  listener: ((event: OpencodeJsonlEvent) => void) | undefined,
+): void {
+  for (const event of parseJsonlEvents(stdout)) notifyEvent(listener, event);
 }
 
 function sessionIdOf(events: OpencodeJsonlEvent[]): string | undefined {
@@ -191,13 +262,21 @@ export async function runOpencodeHeadless(options: RunHeadlessOptions): Promise<
   args.push(options.prompt);
 
   let stdout: string;
+  let observingLiveStream = false;
   try {
-    ({ stdout } = await execa('opencode', args, {
+    const subprocess = execa('opencode', args, {
       cwd: options.cwd,
       cancelSignal: options.signal,
-    }));
+    });
+    observingLiveStream = observeJsonlEvents(
+      (subprocess as unknown as { stdout?: unknown }).stdout,
+      options.onEvent,
+    );
+    ({ stdout } = await subprocess);
+    if (!observingLiveStream) replayEvents(stdout, options.onEvent);
   } catch (error) {
     if (!isExecaLikeError(error)) throw error;
+    if (!observingLiveStream) replayEvents(error.stdout, options.onEvent);
     const events = parseJsonlEvents(error.stdout);
     throw (
       toRejectionOrAbort(events) ??

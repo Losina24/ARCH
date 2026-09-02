@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
-import { ScrollBox } from './scroll-box.js';
+import { ScrollBox, TailScrollBox } from './scroll-box.js';
 
 function Lines({ count }: { count: number }) {
   return (
@@ -42,5 +42,24 @@ describe('ScrollBox', () => {
     expect(frame).toContain('line 2');
     expect(frame).toContain('line 3');
     expect(frame).not.toContain('line 4');
+  });
+
+  it('keeps a tail viewport pinned to the newest lines as content grows', async () => {
+    const { lastFrame, rerender } = render(
+      <TailScrollBox height={2}>
+        <Lines count={5} />
+      </TailScrollBox>,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('line 4'));
+    expect(lastFrame()).not.toContain('line 0');
+
+    rerender(
+      <TailScrollBox height={2}>
+        <Lines count={6} />
+      </TailScrollBox>,
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('line 5'));
+    expect(lastFrame()).not.toContain('line 3');
   });
 });

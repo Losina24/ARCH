@@ -2,13 +2,16 @@
 // model-registry. Unlike that registry, an unknown alias is *expected* here too — new GPT
 // model ids ship often, so resolveCodexModelId falls back to passing the input straight through.
 export const KNOWN_CODEX_MODELS = {
-  'gpt-5.1': 'gpt-5.1',
-  'gpt-5.1-codex': 'gpt-5.1-codex',
-  'gpt-5.1-codex-mini': 'gpt-5.1-codex-mini',
+  'gpt-5.6': 'gpt-5.6-sol',
+  'gpt-5.6-sol': 'gpt-5.6-sol',
+  'gpt-5.6-terra': 'gpt-5.6-terra',
+  'gpt-5.6-luna': 'gpt-5.6-luna',
+  'gpt-5.5': 'gpt-5.5',
+  'gpt-5.3-codex-spark': 'gpt-5.3-codex-spark',
   o3: 'o3',
-  gpt5: 'gpt-5.1',
-  codex: 'gpt-5.1-codex',
-  'codex-mini': 'gpt-5.1-codex-mini',
+  gpt5: 'gpt-5.6-sol',
+  codex: 'gpt-5.6-sol',
+  'codex-mini': 'gpt-5.6-luna',
 } as const;
 
 export type KnownCodexModelAlias = keyof typeof KNOWN_CODEX_MODELS;

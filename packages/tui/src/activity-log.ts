@@ -52,8 +52,8 @@ export function taskStatusLogTone(status: TaskStatus): ActivityLogTone {
 
 /**
  * Derives a human-readable, chronological log from the raw event stream.
- * There's no dedicated "review started"/"review failed" event on the bus, so
- * those moments are inferred from agent:activity transitions instead.
+ * Review lifecycle entries come from the dedicated review events. Agent activity is deliberately
+ * not used for them: providers may emit many `thinking` updates during one review turn.
  */
 export function buildActivityLog(
   events: ArchMeshEvent[],
@@ -86,9 +86,7 @@ export function buildActivityLog(
     }
 
     if (event.type === 'agent:activity') {
-      if (event.role === 'architect' && event.taskId && event.state === 'thinking') {
-        entries.push({ id, text: withTime(`Review started on ${event.taskId}`), tone: 'warning' });
-      } else if (event.state === 'failed' && !event.taskId) {
+      if (event.state === 'failed' && !event.taskId) {
         entries.push({ id, text: withTime('Architect failed during planning'), tone: 'error' });
       }
       return;
@@ -117,7 +115,7 @@ export function buildActivityLog(
     }
 
     if (event.type === 'review:requested') {
-      entries.push({ id, text: withTime(`Review requested for ${event.taskId}`), tone: 'info' });
+      entries.push({ id, text: withTime(`Review started on ${event.taskId}`), tone: 'warning' });
       return;
     }
 

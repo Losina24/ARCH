@@ -1,18 +1,28 @@
 import {
   ClaudeApiRejectionError,
+  type ClaudeJsonlEvent,
   ClaudeStreamAbortedError,
   runClaudeHeadless,
 } from '@losina/claude-runtime';
 import {
   CodexApiRejectionError,
+  type CodexJsonlEvent,
   CodexStreamAbortedError,
+  CodexTimeoutError,
   runCodexHeadless,
 } from '@losina/codex-runtime';
 import {
   OpencodeApiRejectionError,
+  type OpencodeJsonlEvent,
   OpencodeStreamAbortedError,
   runOpencodeHeadless,
 } from '@losina/opencode-runtime';
+import {
+  type AgentProgressEvent,
+  progressFromClaudeEvent,
+  progressFromCodexEvent,
+  progressFromOpencodeEvent,
+} from './progress.js';
 import { detectProvider } from './provider.js';
 
 export type PermissionMode = 'plan' | 'default' | 'acceptEdits' | 'bypassPermissions';
@@ -25,6 +35,8 @@ export interface RunAgentHeadlessOptions {
   permissionMode?: PermissionMode;
   signal?: AbortSignal;
   additionalDirs?: string[];
+  /** Receives sanitized, provider-neutral activity while the turn is still running. */
+  onProgress?: (progress: AgentProgressEvent) => void;
 }
 
 export interface RunAgentHeadlessResult {
@@ -40,21 +52,43 @@ export interface RunAgentHeadlessResult {
 export async function runAgentHeadless(
   options: RunAgentHeadlessOptions,
 ): Promise<RunAgentHeadlessResult> {
+  const { onProgress, ...runtimeOptions } = options;
+  const report = (progress: AgentProgressEvent | undefined) => {
+    if (progress) onProgress?.(progress);
+  };
+
   switch (detectProvider(options.model)) {
     case 'codex':
-      return runCodexHeadless(options);
+      return runCodexHeadless({
+        ...runtimeOptions,
+        onEvent: onProgress
+          ? (event: CodexJsonlEvent) => report(progressFromCodexEvent(event, options.cwd))
+          : undefined,
+      });
     case 'opencode':
-      return runOpencodeHeadless(options);
+      return runOpencodeHeadless({
+        ...runtimeOptions,
+        onEvent: onProgress
+          ? (event: OpencodeJsonlEvent) => report(progressFromOpencodeEvent(event, options.cwd))
+          : undefined,
+      });
     case 'claude':
-      return runClaudeHeadless(options);
+      return runClaudeHeadless({
+        ...runtimeOptions,
+        onEvent: onProgress
+          ? (event: ClaudeJsonlEvent) => report(progressFromClaudeEvent(event, options.cwd))
+          : undefined,
+      });
   }
 }
 
 /**
- * True for a dispatch failure that happened before or without producing any usable output —
- * safe to retry unmodified regardless of which provider ran it. Callers that need
- * provider-specific detail (e.g. Claude's billed cost, Codex's exit code) can still import and
- * check the underlying error classes directly; this is only for the shared retry decision.
+ * True for an infrastructure-level dispatch failure that is safe to retry in the same working
+ * directory regardless of which provider ran it. A timeout or interrupted stream may have left
+ * useful partial files behind; keeping the working directory lets the next turn inspect and
+ * finish that work. Callers that need provider-specific detail (e.g. Claude's billed cost,
+ * Codex's timeout) can still inspect the underlying error classes directly; this is only for the
+ * shared retry decision.
  */
 export function isTransientDispatchError(error: unknown): boolean {
   return (
@@ -62,12 +96,16 @@ export function isTransientDispatchError(error: unknown): boolean {
     error instanceof ClaudeStreamAbortedError ||
     error instanceof CodexApiRejectionError ||
     error instanceof CodexStreamAbortedError ||
+    error instanceof CodexTimeoutError ||
     error instanceof OpencodeApiRejectionError ||
     error instanceof OpencodeStreamAbortedError
   );
 }
 
 export function describeTransientDispatchFailure(error: unknown): string {
+  if (error instanceof CodexTimeoutError) {
+    return 'dispatch timed out';
+  }
   if (
     error instanceof ClaudeApiRejectionError ||
     error instanceof CodexApiRejectionError ||

@@ -1,6 +1,6 @@
 {
   "name": "@losina/validator",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Runs a task's automated checks and builds correction feedback for ARCH.",
   "license": "MIT",
   "type": "module",

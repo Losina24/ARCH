@@ -32,7 +32,18 @@ interface AgentTranscriptProps {
 
 type TranscriptEntry =
   | { kind: 'dispatch'; index: number; taskId?: string }
-  | { kind: 'lifecycle'; index: number; state: AgentActivityState; taskId?: string; tool?: string }
+  | {
+      kind: 'lifecycle';
+      index: number;
+      state: AgentActivityState;
+      taskId?: string;
+      detail?: string;
+      tool?: string;
+      file?: string;
+      /** First and last source-event positions covered by this displayed row. */
+      lastIndex: number;
+      repeatCount: number;
+    }
   | {
       kind: 'task-status';
       index: number;
@@ -61,8 +72,12 @@ const TONE_COLOR = {
 function lifecycleText(
   state: AgentActivityState,
   taskId: string | undefined,
+  detail: string | undefined,
   tool: string | undefined,
+  file: string | undefined,
 ): string {
+  const activity = detail ?? (state === 'using-tool' && tool ? `using ${tool}` : undefined);
+  if (activity) return file ? `${activity} · ${file}` : activity;
   switch (state) {
     case 'spawning':
       return 'starting…';
@@ -80,11 +95,27 @@ function lifecycleText(
 }
 
 function LifecycleGlyph({ state, isLatest }: { state: AgentActivityState; isLatest: boolean }) {
-  if (isLatest && (state === 'spawning' || state === 'using-tool'))
-    return <Spinner color="yellow" />;
+  if (isLatest && (state === 'spawning' || state === 'thinking' || state === 'using-tool'))
+    // Ink 5 redraws the full output for every animation frame. `simpleDots` keeps a fixed width
+    // and advances every 400 ms instead of the default spinner's 80 ms, so the current activity
+    // remains visibly alive without continuously repainting the Console.
+    return <Spinner color="yellow" type="simpleDots" />;
   if (state === 'completed') return <Text color={SUCCESS}>✓</Text>;
   if (state === 'failed') return <Text color={ERROR}>✗</Text>;
   return <Text dimColor>⏸</Text>;
+}
+
+function isSameLifecycleActivity(
+  previous: Extract<TranscriptEntry, { kind: 'lifecycle' }>,
+  current: Extract<TranscriptEntry, { kind: 'lifecycle' }>,
+): boolean {
+  return (
+    previous.state === current.state &&
+    previous.taskId === current.taskId &&
+    previous.detail === current.detail &&
+    previous.tool === current.tool &&
+    previous.file === current.file
+  );
 }
 
 function buildEntries(
@@ -104,7 +135,7 @@ function buildEntries(
   const seenInProgress = new Set<string>();
   events.forEach((event, index) => {
     if (event.type === 'agent:activity' && agentIdSet.has(event.agentId)) {
-      if (event.state === 'thinking') {
+      if (event.state === 'thinking' && !event.detail) {
         if (event.viaHumanPrompt) {
           const pending = [...entries]
             .reverse()
@@ -119,13 +150,33 @@ function buildEntries(
         }
         entries.push({ kind: 'dispatch', index, taskId: event.taskId });
       } else {
-        entries.push({
+        // Both Codex item.completed and Claude tool_result mean only that control returned to the
+        // model. They are useful as the live status in the Agents column, but recording one after
+        // every tool doubles the transcript without adding a durable milestone.
+        if (event.detail === 'Analyzing results') return;
+
+        const current: Extract<TranscriptEntry, { kind: 'lifecycle' }> = {
           kind: 'lifecycle',
           index,
+          lastIndex: index,
+          repeatCount: 1,
           state: event.state,
           taskId: event.taskId,
+          detail: event.detail,
           tool: event.tool,
-        });
+          file: event.file,
+        };
+        const previous = entries[entries.length - 1];
+        if (
+          event.detail &&
+          previous?.kind === 'lifecycle' &&
+          isSameLifecycleActivity(previous, current)
+        ) {
+          previous.lastIndex = index;
+          previous.repeatCount += 1;
+        } else {
+          entries.push(current);
+        }
       }
       return;
     }
@@ -190,7 +241,7 @@ export function AgentTranscript({
 
   let lastLifecycleIndex = -1;
   for (const entry of entries) {
-    if (entry.kind === 'lifecycle') lastLifecycleIndex = entry.index;
+    if (entry.kind === 'lifecycle') lastLifecycleIndex = entry.lastIndex;
   }
 
   return (
@@ -214,8 +265,15 @@ export function AgentTranscript({
           return (
             <Text key={entry.index}>
               {time}
-              <LifecycleGlyph state={entry.state} isLatest={entry.index === lastLifecycleIndex} />
-              <Text dimColor> {lifecycleText(entry.state, entry.taskId, entry.tool)}</Text>
+              <LifecycleGlyph
+                state={entry.state}
+                isLatest={entry.lastIndex === lastLifecycleIndex}
+              />
+              <Text dimColor>
+                {' '}
+                {lifecycleText(entry.state, entry.taskId, entry.detail, entry.tool, entry.file)}
+                {entry.repeatCount > 1 ? ` ×${entry.repeatCount}` : ''}
+              </Text>
             </Text>
           );
         }

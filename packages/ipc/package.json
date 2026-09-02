@@ -1,6 +1,6 @@
 {
   "name": "@losina/ipc",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Message types exchanged between the ARCH daemon and its clients.",
   "license": "MIT",
   "type": "module",

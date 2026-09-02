@@ -8,6 +8,7 @@ import {
 } from '@losina/core';
 import type { ReviewRequestedEvent } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
+import { activityFromProgress } from './agent-progress.js';
 import { RunAbortedError } from './run-aborted-error.js';
 
 export interface ArchitectLoopParams {
@@ -83,6 +84,18 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           workerSummary: request.workerSummary,
           resumeSessionId: architectSessionId,
           signal,
+          onProgress: (progress) =>
+            bus.emit(
+              activityFromProgress(
+                {
+                  runId,
+                  agentId: architectAgentId,
+                  role: 'architect',
+                  taskId: request.taskId,
+                },
+                progress,
+              ),
+            ),
         });
 
         architectSessionId = review.sessionId;

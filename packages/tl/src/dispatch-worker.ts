@@ -1,4 +1,4 @@
-import { runAgentHeadless } from '@losina/agent-runtime';
+import { type AgentProgressEvent, runAgentHeadless } from '@losina/agent-runtime';
 import { type WorktreeHandle, getStagedFiles, stageAll } from '@losina/core';
 import type { Task } from '@losina/schemas';
 import { type CorrectionSource, buildWorkerPrompt } from './prompts.js';
@@ -15,6 +15,7 @@ export interface DispatchWorkerInput {
   /** A human's note to the worker, injected only on a fresh dispatch (no correctionMarkdown). */
   humanMessage?: string;
   signal?: AbortSignal;
+  onProgress?: (progress: AgentProgressEvent) => void;
   /**
    * Overrides how changed files are detected after the worker runs. Defaults to staging
    * everything (`stageAll` + `getStagedFiles`), which is safe when the task has an isolated
@@ -53,6 +54,7 @@ export async function dispatchWorker(input: DispatchWorkerInput): Promise<Dispat
     // the Worker unattended Bash directly in the user's real project.
     permissionMode: 'bypassPermissions',
     signal: input.signal,
+    onProgress: input.onProgress,
   });
 
   const filesChanged = input.detectChanges

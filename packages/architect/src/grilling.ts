@@ -1,6 +1,6 @@
 import { readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { runAgentHeadless } from '@losina/agent-runtime';
+import { type AgentProgressEvent, runAgentHeadless } from '@losina/agent-runtime';
 import { getArchPaths } from '@losina/config';
 import type { RunMeta } from '@losina/schemas';
 import { buildGrillingAnswerPrompt, buildGrillingPrompt } from './prompts.js';
@@ -12,6 +12,7 @@ export interface GrillingRoundInput {
   resumeSessionId?: string;
   priorAnswer?: string;
   signal?: AbortSignal;
+  onProgress?: (progress: AgentProgressEvent) => void;
 }
 
 export type GrillingRoundOutput =
@@ -36,6 +37,7 @@ export async function runGrillingRound(input: GrillingRoundInput): Promise<Grill
     permissionMode: 'bypassPermissions',
     additionalDirs: [dirname(questionFilePath)],
     signal: input.signal,
+    onProgress: input.onProgress,
   });
 
   if (!(await fileExists(questionFilePath))) {

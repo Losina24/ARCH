@@ -58,6 +58,17 @@ function mockClient(overrides: Partial<ArchClient> = {}): ArchClient {
 }
 
 describe('RunDetailView', () => {
+  it('keeps one terminal row free so animated frames do not trigger a full-terminal clear', async () => {
+    const client = mockClient();
+    const { lastFrame } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('/tmp/project'));
+    // useTerminalRows falls back to 24 rows under ink-testing-library.
+    expect((lastFrame() ?? '').split('\n')).toHaveLength(23);
+  });
+
   it('lands on the planification tab showing the prompt, models, and a waiting status', async () => {
     const client = mockClient();
     const { lastFrame } = render(
@@ -672,6 +683,42 @@ describe('RunDetailView', () => {
 
     await vi.waitFor(() => expect(lastFrame()).toContain('message-9'));
     expect(lastFrame()).not.toContain('message-0');
+
+    handler?.({
+      type: 'agent:message',
+      runId: 'run-1',
+      agentId: 'worker-TASK-001',
+      role: 'worker',
+      taskId: 'TASK-001',
+      text: 'message-10',
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('message-10'));
+    expect(lastFrame()).toContain('❯ Worker 1');
+
+    await press(stdin, '\x1b[5~');
+    handler?.({
+      type: 'agent:message',
+      runId: 'run-1',
+      agentId: 'worker-TASK-001',
+      role: 'worker',
+      taskId: 'TASK-001',
+      text: 'message-11',
+    });
+    await tick();
+    expect(lastFrame()).not.toContain('message-11');
+    expect(lastFrame()).toContain('❯ Worker 1');
+
+    await press(stdin, '\x1b[6~');
+    await press(stdin, '\x1b[6~');
+    handler?.({
+      type: 'agent:message',
+      runId: 'run-1',
+      agentId: 'worker-TASK-001',
+      role: 'worker',
+      taskId: 'TASK-001',
+      text: 'message-12',
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('message-12'));
   });
 
   it('resumes a failed worker with a prompt from the Console tab', async () => {

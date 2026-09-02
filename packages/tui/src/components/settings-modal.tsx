@@ -1,4 +1,5 @@
 import type { ArchClient } from '@losina/daemon-client';
+import type { AgentMeshConfig } from '@losina/schemas';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { useEffect, useState } from 'react';
@@ -10,6 +11,7 @@ interface SettingsModalProps {
   client: ArchClient;
   columns: number;
   rows: number;
+  onConfigChange: (config: AgentMeshConfig) => void;
   onClose: () => void;
 }
 
@@ -51,7 +53,13 @@ const CONTENT_WIDTH = Math.max(
 const WIDTH = CONTENT_WIDTH + SIDE_PADDING * 2;
 const HEIGHT = FIELDS.length + 4 + VERTICAL_PADDING * 2;
 
-export function SettingsModal({ client, columns, rows, onClose }: SettingsModalProps) {
+export function SettingsModal({
+  client,
+  columns,
+  rows,
+  onConfigChange,
+  onClose,
+}: SettingsModalProps) {
   const [values, setValues] = useState<Record<FieldKey, string>>({
     architectModel: '',
     tlModel: '',
@@ -100,6 +108,7 @@ export function SettingsModal({ client, columns, rows, onClose }: SettingsModalP
       maxRetries: String(updated.execution.maxRetries),
       useWorktrees: String(updated.execution.useWorktrees),
     });
+    onConfigChange(updated);
     setStatus('Saved.');
   };
 

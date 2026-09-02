@@ -96,12 +96,14 @@ describe('planProject', () => {
       return { sessionId: 'session-3', output: 'PLAN_READY' };
     });
     const controller = new AbortController();
+    const onProgress = vi.fn();
 
     await planProject({
       run,
       model: 'opus',
       resumeSessionId: 'previous-session',
       signal: controller.signal,
+      onProgress,
     });
 
     const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
@@ -110,6 +112,7 @@ describe('planProject', () => {
       cwd,
       resumeSessionId: 'previous-session',
       signal: controller.signal,
+      onProgress,
       permissionMode: 'bypassPermissions',
     });
   });

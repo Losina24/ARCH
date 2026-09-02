@@ -2,6 +2,7 @@ import {
   type AgentProvider,
   detectInstalledProvidersAsync,
   detectProvider,
+  listCodexModels,
   listOpenCodeModels,
 } from '@losina/agent-runtime';
 import { Box, Text, useInput } from 'ink';
@@ -28,12 +29,10 @@ interface ProviderDef {
 // OpenCode into its generic upstream-provider models and OpenCode Zen's own hosted catalog —
 // both dispatch through the same `opencode` binary (detectProvider only knows 'opencode'), so
 // the split exists purely to let Zen models show up without needing a live `opencode models`
-// fetch. Claude/Codex's lists are a handful of known ids plus a "Custom…" escape hatch — GPT ids
-// ship often, so that list can never be exhaustive either. Generic OpenCode's placeholder model
-// here is only the loading-state fallback: its real list is fetched live via `listOpenCodeModels`
-// since "provider/model" ids depend entirely on which upstream provider the user has
-// authenticated. Zen's list is curated by hand since its models are stable and don't require the
-// live fetch (see https://opencode.ai/docs/zen/) — handy when the CLI is authenticated only via
+// fetch. Claude's list is curated; Codex and generic OpenCode are replaced with live catalogs
+// whenever their CLIs return one. Their entries here are current fallbacks for missing, old, or
+// unauthenticated CLIs. Zen's list is curated by hand since its models are stable and don't require
+// the live fetch (see https://opencode.ai/docs/zen/) — handy when the CLI is authenticated only via
 // `{env:OPENCODE_API_KEY}` in opencode.json (e.g. on a headless EC2/Fargate box) rather than
 // through an interactive `opencode auth login`, where the live fetch may not have run yet.
 const ALL_PROVIDERS: ProviderDef[] = [
@@ -45,7 +44,7 @@ const ALL_PROVIDERS: ProviderDef[] = [
   {
     key: 'codex',
     label: 'Codex',
-    models: ['gpt-5.1', 'gpt-5.1-codex', 'gpt-5.1-codex-mini'],
+    models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
   },
   {
     key: 'opencode',
@@ -98,13 +97,18 @@ function isInstalled(installed: Set<AgentProvider>, key: ProviderKey): boolean {
 function visibleProvidersFor(
   installed: Set<AgentProvider>,
   currentValue: string,
+  codexModels: string[],
   opencodeModels: string[],
 ): Provider[] {
-  const providers = ALL_PROVIDERS.map((provider) =>
-    provider.key === 'opencode' && opencodeModels.length > 0
-      ? { ...provider, models: opencodeModels }
-      : provider,
-  );
+  const providers = ALL_PROVIDERS.map((provider) => {
+    if (provider.key === 'codex' && codexModels.length > 0) {
+      return { ...provider, models: codexModels };
+    }
+    if (provider.key === 'opencode' && opencodeModels.length > 0) {
+      return { ...provider, models: opencodeModels };
+    }
+    return provider;
+  });
   const homeKey = uiProviderKeyFor(currentValue);
   const filtered = providers.filter(
     (provider) => isInstalled(installed, provider.key) || provider.key === homeKey,
@@ -195,9 +199,9 @@ export function ModelPickerModal({
   // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([detectInstalledProvidersAsync(), listOpenCodeModels()])
-      .then(([installed, opencodeModels]) =>
-        visibleProvidersFor(installed, currentValue, opencodeModels),
+    Promise.all([detectInstalledProvidersAsync(), listCodexModels(), listOpenCodeModels()])
+      .then(([installed, codexModels, opencodeModels]) =>
+        visibleProvidersFor(installed, currentValue, codexModels, opencodeModels),
       )
       .catch(() => [...ALL_PROVIDERS])
       .then((resolved) => {

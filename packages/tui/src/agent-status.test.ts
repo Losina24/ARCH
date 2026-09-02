@@ -85,6 +85,23 @@ describe('deriveAgentStatuses', () => {
     expect(entry.statusText).toBe('Reviewing TASK-001');
   });
 
+  it('prefers detailed live activity, file, and task over the generic role status', () => {
+    const entry = deriveAgentStatuses([
+      event({
+        agentId: 'worker-TASK-001',
+        role: 'worker',
+        state: 'using-tool',
+        detail: 'Running tests',
+        tool: 'Shell',
+        file: 'src/auth.ts',
+        taskId: 'TASK-001',
+      }),
+    ]).find((candidate) => candidate.role === 'worker');
+
+    expect(entry?.statusText).toBe('Running tests · src/auth.ts · TASK-001');
+    expect(entry?.category).toBe('working');
+  });
+
   it('uses only the latest event per agent', () => {
     const entries = deriveAgentStatuses([
       event({ state: 'thinking' }),
@@ -119,6 +136,60 @@ describe('deriveAgentStatuses', () => {
     expect(workers).toHaveLength(1);
     expect(workers[0].label).toBe('Worker 1');
     expect(workers[0].agentId).toBe('worker-TASK-003');
+  });
+
+  it('does not allocate the same freed slot to concurrent workers after repeated failures', () => {
+    const events: ArchMeshEvent[] = [
+      event({ agentId: 'worker-TASK-002', role: 'worker', state: 'thinking', taskId: 'TASK-002' }),
+      { type: 'task:status-changed', runId: 'run-1', taskId: 'TASK-002', status: 'failed' },
+      event({ agentId: 'worker-TASK-002', role: 'worker', state: 'failed', taskId: 'TASK-002' }),
+      { type: 'task:status-changed', runId: 'run-1', taskId: 'TASK-002', status: 'pending' },
+      { type: 'task:status-changed', runId: 'run-1', taskId: 'TASK-002', status: 'failed' },
+      event({ agentId: 'worker-TASK-002', role: 'worker', state: 'failed', taskId: 'TASK-002' }),
+      { type: 'task:status-changed', runId: 'run-1', taskId: 'TASK-002', status: 'done' },
+      event({ agentId: 'worker-TASK-003', role: 'worker', state: 'thinking', taskId: 'TASK-003' }),
+      event({ agentId: 'worker-TASK-004', role: 'worker', state: 'thinking', taskId: 'TASK-004' }),
+      event({ agentId: 'worker-TASK-007', role: 'worker', state: 'thinking', taskId: 'TASK-007' }),
+    ];
+
+    const workers = deriveAgentStatuses(events).filter((entry) => entry.role === 'worker');
+    expect(workers.map(({ agentId, label }) => [agentId, label])).toEqual([
+      ['worker-TASK-003', 'Worker 1'],
+      ['worker-TASK-004', 'Worker 2'],
+      ['worker-TASK-007', 'Worker 3'],
+    ]);
+  });
+
+  it('marks a failed worker slot occupied again when that task resumes', () => {
+    const events: ArchMeshEvent[] = [
+      event({ agentId: 'worker-TASK-001', role: 'worker', state: 'thinking', taskId: 'TASK-001' }),
+      { type: 'task:status-changed', runId: 'run-1', taskId: 'TASK-001', status: 'failed' },
+      { type: 'task:status-changed', runId: 'run-1', taskId: 'TASK-001', status: 'in_progress' },
+      event({ agentId: 'worker-TASK-001', role: 'worker', state: 'thinking', taskId: 'TASK-001' }),
+      event({ agentId: 'worker-TASK-002', role: 'worker', state: 'thinking', taskId: 'TASK-002' }),
+    ];
+
+    const workers = deriveAgentStatuses(events).filter((entry) => entry.role === 'worker');
+    expect(workers.map(({ agentId, label }) => [agentId, label])).toEqual([
+      ['worker-TASK-001', 'Worker 1'],
+      ['worker-TASK-002', 'Worker 2'],
+    ]);
+  });
+
+  it('moves a resumed worker to another slot if its previous one has already been reused', () => {
+    const events: ArchMeshEvent[] = [
+      event({ agentId: 'worker-TASK-001', role: 'worker', state: 'thinking', taskId: 'TASK-001' }),
+      { type: 'task:status-changed', runId: 'run-1', taskId: 'TASK-001', status: 'failed' },
+      event({ agentId: 'worker-TASK-002', role: 'worker', state: 'thinking', taskId: 'TASK-002' }),
+      { type: 'task:status-changed', runId: 'run-1', taskId: 'TASK-001', status: 'in_progress' },
+      event({ agentId: 'worker-TASK-001', role: 'worker', state: 'thinking', taskId: 'TASK-001' }),
+    ];
+
+    const workers = deriveAgentStatuses(events).filter((entry) => entry.role === 'worker');
+    expect(workers.map(({ agentId, label }) => [agentId, label])).toEqual([
+      ['worker-TASK-002', 'Worker 1'],
+      ['worker-TASK-001', 'Worker 2'],
+    ]);
   });
 });
 

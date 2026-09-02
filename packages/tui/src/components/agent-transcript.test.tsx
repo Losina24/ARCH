@@ -61,6 +61,109 @@ describe('AgentTranscript', () => {
     expect(frame).toContain('finished · TASK-001');
   });
 
+  it('omits generic post-tool analysis transitions from the transcript', () => {
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'thinking',
+        detail: 'Analyzing results',
+        file: 'src/auth.ts',
+        taskId: 'TASK-001',
+      },
+    ];
+    const { lastFrame } = render(
+      <AgentTranscript events={events} agentIds={[agentId]} agentLabel="Worker 1" />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('No activity yet for this agent.');
+    expect(frame).not.toContain('Analyzing results');
+    expect(frame).not.toContain('sent prompt');
+  });
+
+  it('groups consecutive identical activity around omitted analysis transitions', () => {
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'using-tool',
+        detail: 'Searching files',
+        tool: 'Shell',
+        taskId: 'TASK-001',
+      },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'thinking',
+        detail: 'Analyzing results',
+        taskId: 'TASK-001',
+      },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'using-tool',
+        detail: 'Searching files',
+        tool: 'Shell',
+        taskId: 'TASK-001',
+      },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'thinking',
+        detail: 'Analyzing results',
+        taskId: 'TASK-001',
+      },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'using-tool',
+        detail: 'Searching files',
+        tool: 'Shell',
+        taskId: 'TASK-001',
+      },
+    ];
+
+    const { lastFrame } = render(
+      <AgentTranscript events={events} agentIds={[agentId]} agentLabel="Worker 1" />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame.match(/Searching files/g)).toHaveLength(1);
+    expect(frame).toContain('Searching files ×3');
+    expect(frame).not.toContain('Analyzing results');
+  });
+
+  it('uses a calm spinner for the latest live activity', () => {
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'using-tool',
+        detail: 'Running tests',
+        tool: 'Shell',
+        taskId: 'TASK-001',
+      },
+    ];
+
+    const { lastFrame } = render(
+      <AgentTranscript events={events} agentIds={[agentId]} agentLabel="Worker 1" />,
+    );
+    expect(lastFrame()).toContain('.   Running tests');
+  });
+
   it('renders a failed lifecycle event', () => {
     const events: ArchMeshEvent[] = [
       {

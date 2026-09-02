@@ -215,6 +215,9 @@ importers:
       '@losina/claude-runtime':
         specifier: workspace:*
         version: link:../claude-runtime
+      '@losina/codex-runtime':
+        specifier: workspace:*
+        version: link:../codex-runtime
       '@losina/config':
         specifier: workspace:*
         version: link:../config

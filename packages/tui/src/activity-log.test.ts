@@ -78,7 +78,7 @@ describe('buildActivityLog', () => {
     expect(buildActivityLog(events)).toEqual([]);
   });
 
-  it('infers a review-started entry from the architect thinking on a task', () => {
+  it('does not infer review starts from architect thinking updates', () => {
     const events: ArchMeshEvent[] = [
       {
         type: 'agent:activity',
@@ -88,11 +88,18 @@ describe('buildActivityLog', () => {
         taskId: 'TASK-1',
         state: 'thinking',
       },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId: 'architect-1',
+        role: 'architect',
+        taskId: 'TASK-1',
+        state: 'thinking',
+        detail: 'Analyzing results',
+      },
     ];
 
-    expect(buildActivityLog(events)).toEqual([
-      { id: '0', text: 'Review started on TASK-1', tone: 'warning' },
-    ]);
+    expect(buildActivityLog(events)).toEqual([]);
   });
 
   it('reports an architect failure with no task as a planning failure', () => {
@@ -128,13 +135,30 @@ describe('buildActivityLog', () => {
     expect(buildActivityLog(events)).toEqual([]);
   });
 
-  it('reports a review request as an info entry', () => {
+  it('reports exactly one review start from its dedicated request event', () => {
     const events: ArchMeshEvent[] = [
       { type: 'review:requested', runId, taskId: 'TASK-1', seq: 1, requestPath: '/tmp/req.yaml' },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId: 'architect-1',
+        role: 'architect',
+        taskId: 'TASK-1',
+        state: 'thinking',
+      },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId: 'architect-1',
+        role: 'architect',
+        taskId: 'TASK-1',
+        state: 'thinking',
+        detail: 'Analyzing results',
+      },
     ];
 
     expect(buildActivityLog(events)).toEqual([
-      { id: '0', text: 'Review requested for TASK-1', tone: 'info' },
+      { id: '0', text: 'Review started on TASK-1', tone: 'warning' },
     ]);
   });
 

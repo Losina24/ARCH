@@ -4,6 +4,7 @@ import { agentRoleColor, deriveAgentStatuses, workerSlotGroup } from '../agent-s
 import { AgentTranscript } from '../components/agent-transcript.js';
 import { GradientText } from '../components/gradient-text.js';
 import { LegendBox } from '../components/legend-box.js';
+import { ScrollBox, type ScrollMetrics } from '../components/scroll-box.js';
 import { ACCENT, ERROR, MUTED, SELECTION_CURSOR, SUCCESS, WAITING } from '../theme.js';
 
 interface ConsolePanelProps {
@@ -11,6 +12,9 @@ interface ConsolePanelProps {
   eventTimestamps?: number[];
   selectedAgentId: string | null;
   width: number;
+  height: number;
+  scrollOffset: number;
+  onScrollMetrics: (metrics: ScrollMetrics) => void;
 }
 
 const AGENT_LABEL_WIDTH = 12;
@@ -31,6 +35,9 @@ export function ConsolePanel({
   eventTimestamps,
   selectedAgentId,
   width,
+  height,
+  scrollOffset,
+  onScrollMetrics,
 }: ConsolePanelProps) {
   const agents = deriveAgentStatuses(events);
   const selectedAgent = agents.find((agent) => agent.agentId === selectedAgentId);
@@ -41,10 +48,17 @@ export function ConsolePanel({
     Math.max(LEFT_COLUMN_MIN_WIDTH, Math.floor(width * LEFT_COLUMN_RATIO)),
   );
   const rightWidth = Math.max(0, width - leftWidth - COLUMN_GAP);
+  const transcriptHeight = Math.max(1, height - 2); // heading + margin above the transcript
 
   return (
-    <Box width={width}>
-      <Box flexDirection="column" width={leftWidth} marginRight={COLUMN_GAP}>
+    <Box width={width} height={height} overflow="hidden" alignItems="flex-start">
+      <Box
+        flexDirection="column"
+        width={leftWidth}
+        height={height}
+        overflow="hidden"
+        marginRight={COLUMN_GAP}
+      >
         <LegendBox label="Agents" width={leftWidth}>
           {agents.length === 0 ? (
             <Text dimColor>No agents yet.</Text>
@@ -69,20 +83,28 @@ export function ConsolePanel({
         </LegendBox>
       </Box>
 
-      <Box flexDirection="column" width={rightWidth}>
+      <Box flexDirection="column" width={rightWidth} height={height} overflow="hidden">
         <GradientText>Agent console</GradientText>
         <Box marginTop={1}>
-          {!selectedAgentId ? (
-            <Text dimColor>Select an agent to access its terminal.</Text>
-          ) : (
-            <AgentTranscript
-              events={events}
-              eventTimestamps={eventTimestamps}
-              agentIds={transcriptAgentIds}
-              agentLabel={selectedAgent?.label ?? selectedAgentId}
-              width={rightWidth}
-            />
-          )}
+          <ScrollBox
+            height={transcriptHeight}
+            scrollOffset={scrollOffset}
+            onContentHeight={(contentHeight) =>
+              onScrollMetrics({ contentHeight, viewportHeight: transcriptHeight })
+            }
+          >
+            {!selectedAgentId ? (
+              <Text dimColor>Select an agent to access its terminal.</Text>
+            ) : (
+              <AgentTranscript
+                events={events}
+                eventTimestamps={eventTimestamps}
+                agentIds={transcriptAgentIds}
+                agentLabel={selectedAgent?.label ?? selectedAgentId}
+                width={rightWidth}
+              />
+            )}
+          </ScrollBox>
         </Box>
       </Box>
     </Box>

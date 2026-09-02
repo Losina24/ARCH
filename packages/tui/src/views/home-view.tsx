@@ -288,6 +288,7 @@ export function HomeView({
             client={client}
             columns={columns}
             rows={contentRows}
+            onConfigChange={setConfig}
             onClose={() => setSettingsOpen(false)}
           />
         )}

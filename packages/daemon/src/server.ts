@@ -42,12 +42,20 @@ export async function startDaemonServer(
 
   const sockets = new Set<Socket>();
 
+  const removeSocket = (socket: Socket) => {
+    if (!sockets.delete(socket)) return;
+    onClientCountChange?.(sockets.size);
+  };
+
   const server = createServer((socket) => {
     sockets.add(socket);
     onClientCountChange?.(sockets.size);
-    socket.once('close', () => {
-      sockets.delete(socket);
-      onClientCountChange?.(sockets.size);
+    socket.once('close', () => removeSocket(socket));
+    socket.on('error', () => {
+      // A client may disappear between an activity event being queued and broadcast writing it.
+      // Treat EPIPE/ECONNRESET as a disconnect so frequent progress updates cannot crash daemon.
+      removeSocket(socket);
+      socket.destroy();
     });
 
     let buffer = '';
@@ -74,7 +82,16 @@ export async function startDaemonServer(
     broadcast(event) {
       const line = `${JSON.stringify({ event })}\n`;
       for (const socket of sockets) {
-        socket.write(line);
+        if (socket.destroyed || !socket.writable) {
+          removeSocket(socket);
+          continue;
+        }
+        try {
+          socket.write(line);
+        } catch {
+          removeSocket(socket);
+          socket.destroy();
+        }
       }
     },
     close() {

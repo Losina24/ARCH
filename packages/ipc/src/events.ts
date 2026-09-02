@@ -32,6 +32,8 @@ export interface AgentActivityEvent {
   role: AgentRole;
   taskId?: string;
   state: AgentActivityState;
+  /** Sanitized provider-neutral activity, e.g. "Running tests"; never raw tool input/output. */
+  detail?: string;
   tool?: string;
   file?: string;
   /** True when this dispatch carries a human's note (sent from the Console), not an automatic retry. */

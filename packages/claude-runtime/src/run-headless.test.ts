@@ -11,6 +11,10 @@ vi.mock('execa', () => ({ execa: vi.fn() }));
 
 const mockedExeca = vi.mocked(execa);
 
+function jsonl(...events: unknown[]): string {
+  return events.map((event) => JSON.stringify(event)).join('\n');
+}
+
 function mockStdout(json: unknown) {
   mockedExeca.mockResolvedValue({ stdout: JSON.stringify(json) } as never);
 }
@@ -21,7 +25,7 @@ beforeEach(() => {
 
 describe('runClaudeHeadless', () => {
   it('builds the base CLI args and parses the JSON result', async () => {
-    mockStdout({ session_id: 'session-1', result: 'done' });
+    mockStdout({ type: 'result', session_id: 'session-1', result: 'done' });
 
     const result = await runClaudeHeadless({
       prompt: 'Add a function',
@@ -38,11 +42,34 @@ describe('runClaudeHeadless', () => {
       '--model',
       'claude-sonnet-5',
       '--output-format',
-      'json',
+      'stream-json',
+      '--verbose',
       '--setting-sources',
       'project,local',
     ]);
     expect(opts).toMatchObject({ cwd: '/tmp/project' });
+  });
+
+  it('reports every JSONL event through onEvent', async () => {
+    const events = [
+      { type: 'system', subtype: 'init', session_id: 'session-1' },
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'pnpm test' } }] },
+      },
+      { type: 'result', session_id: 'session-1', result: 'done' },
+    ];
+    mockedExeca.mockResolvedValue({ stdout: jsonl(...events) } as never);
+    const onEvent = vi.fn();
+
+    await runClaudeHeadless({
+      prompt: 'p',
+      model: 'sonnet',
+      cwd: '/tmp',
+      onEvent,
+    });
+
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual(events);
   });
 
   it('excludes the user setting source so headless dispatch ignores the operator advisor setting', async () => {

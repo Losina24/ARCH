@@ -7,6 +7,7 @@ import { DagGraph } from '../components/dag-graph.js';
 import { GradientText } from '../components/gradient-text.js';
 import { LegendBox } from '../components/legend-box.js';
 import { ProgressBar } from '../components/progress-bar.js';
+import { ScrollBox, type ScrollMetrics } from '../components/scroll-box.js';
 import { ERROR, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
 
 interface ExecutionPanelProps {
@@ -14,6 +15,9 @@ interface ExecutionPanelProps {
   events: ArchMeshEvent[];
   eventTimestamps?: number[];
   width: number;
+  height: number;
+  scrollOffset: number;
+  onScrollMetrics: (metrics: ScrollMetrics) => void;
   selectedTaskId?: string | null;
 }
 
@@ -61,6 +65,9 @@ export function ExecutionPanel({
   events,
   eventTimestamps,
   width,
+  height,
+  scrollOffset,
+  onScrollMetrics,
   selectedTaskId = null,
 }: ExecutionPanelProps) {
   const activityEvents = events.filter(
@@ -85,10 +92,17 @@ export function ExecutionPanel({
   );
 
   const rightWidth = Math.max(0, width - leftWidth - COLUMN_GAP);
+  const rightViewportHeight = Math.max(1, height - 2); // heading + margin above the viewport
 
   return (
-    <Box width={width}>
-      <Box flexDirection="column" width={leftWidth} marginRight={COLUMN_GAP}>
+    <Box width={width} height={height} overflow="hidden" alignItems="flex-start">
+      <Box
+        flexDirection="column"
+        width={leftWidth}
+        height={height}
+        overflow="hidden"
+        marginRight={COLUMN_GAP}
+      >
         <LegendBox label="Agents" width={leftWidth}>
           <AgentsList events={events} />
         </LegendBox>
@@ -118,16 +132,24 @@ export function ExecutionPanel({
         </Box>
       </Box>
 
-      <Box flexDirection="column" width={rightWidth}>
+      <Box flexDirection="column" width={rightWidth} height={height} overflow="hidden">
         <GradientText>Project status</GradientText>
         <Box marginTop={1}>
-          <DagGraph
-            tasksIndex={plan?.tasksIndex ?? null}
-            events={activityEvents}
-            agentLabels={agentLabels}
-            width={rightWidth}
-            selectedTaskId={selectedTaskId}
-          />
+          <ScrollBox
+            height={rightViewportHeight}
+            scrollOffset={scrollOffset}
+            onContentHeight={(contentHeight) =>
+              onScrollMetrics({ contentHeight, viewportHeight: rightViewportHeight })
+            }
+          >
+            <DagGraph
+              tasksIndex={plan?.tasksIndex ?? null}
+              events={activityEvents}
+              agentLabels={agentLabels}
+              width={rightWidth}
+              selectedTaskId={selectedTaskId}
+            />
+          </ScrollBox>
         </Box>
       </Box>
     </Box>

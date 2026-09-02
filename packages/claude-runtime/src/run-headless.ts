@@ -10,6 +10,8 @@ export interface RunHeadlessOptions {
   resumeSessionId?: string;
   permissionMode?: PermissionMode;
   signal?: AbortSignal;
+  /** Receives each `stream-json` event as soon as Claude Code writes its JSONL line. */
+  onEvent?: (event: ClaudeJsonlEvent) => void;
   /** Extra directories the session may read/write outside `cwd` (one `--add-dir` per entry). */
   additionalDirs?: string[];
 }
@@ -19,17 +21,27 @@ export interface RunHeadlessResult {
   output: string;
 }
 
-interface ClaudeCliJsonOutput {
-  session_id: string;
-  result: string;
+export interface ClaudeContentBlock {
+  type?: string;
+  name?: string;
+  input?: unknown;
+  tool_use_id?: string;
 }
 
-interface ClaudeCliErrorJsonOutput {
+export interface ClaudeJsonlEvent {
+  type?: string;
+  subtype?: string;
+  session_id?: string;
+  result?: string;
   terminal_reason?: string;
   total_cost_usd?: number;
   api_error_status?: number | null;
   num_turns?: number;
-  result?: string;
+  attempt?: number;
+  max_retries?: number;
+  retry_delay_ms?: number;
+  message?: { content?: ClaudeContentBlock[] | string };
+  event?: { type?: string; content_block?: ClaudeContentBlock };
 }
 
 /**
@@ -99,23 +111,103 @@ function isExecaLikeError(error: unknown): error is ExecaLikeError {
 // The CLI exits non-zero on both a pre-execution rejection and a mid-stream abort, but still
 // writes its JSON result body to stdout in both cases — execa throws, but attaches that stdout
 // to the error it throws. Returns null for a crash with no parseable JSON body.
-function parseCliStdoutJson(error: unknown): ClaudeCliErrorJsonOutput | null {
-  if (!isExecaLikeError(error) || typeof error.stdout !== 'string') return null;
+function parseJsonlEvents(stdout: unknown): ClaudeJsonlEvent[] {
+  if (typeof stdout !== 'string') return [];
+  const events: ClaudeJsonlEvent[] = [];
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed) as ClaudeJsonlEvent);
+    } catch {
+      // Non-JSON line (e.g. a CLI banner) — ignore rather than fail the whole parse.
+    }
+  }
+  return events;
+}
+
+function resultEventOf(events: ClaudeJsonlEvent[]): ClaudeJsonlEvent | null {
+  return (
+    [...events]
+      .reverse()
+      .find(
+        (event) =>
+          event.type === 'result' ||
+          typeof event.terminal_reason === 'string' ||
+          (typeof event.session_id === 'string' && typeof event.result === 'string'),
+      ) ?? null
+  );
+}
+
+interface JsonlReadable {
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+function isJsonlReadable(value: unknown): value is JsonlReadable {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { on?: unknown }).on === 'function'
+  );
+}
+
+function notifyEvent(
+  listener: ((event: ClaudeJsonlEvent) => void) | undefined,
+  event: ClaudeJsonlEvent,
+): void {
+  if (!listener) return;
   try {
-    return JSON.parse(error.stdout) as ClaudeCliErrorJsonOutput;
+    listener(event);
   } catch {
-    return null;
+    // Progress reporting is observational: a UI callback must never terminate the agent turn.
   }
 }
 
-function toApiRejection(parsed: ClaudeCliErrorJsonOutput | null): ClaudeApiRejectionError | null {
+function observeJsonlEvents(
+  stdout: unknown,
+  listener: ((event: ClaudeJsonlEvent) => void) | undefined,
+): boolean {
+  if (!listener || !isJsonlReadable(stdout)) return false;
+
+  let pending = '';
+  const consumeLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      notifyEvent(listener, JSON.parse(trimmed) as ClaudeJsonlEvent);
+    } catch {
+      // Ignore banners or other non-JSON noise without interrupting the CLI.
+    }
+  };
+
+  stdout.on('data', (chunk) => {
+    pending += String(chunk ?? '');
+    const lines = pending.split('\n');
+    pending = lines.pop() ?? '';
+    for (const line of lines) consumeLine(line);
+  });
+  stdout.on('end', () => {
+    consumeLine(pending);
+    pending = '';
+  });
+  return true;
+}
+
+function replayEvents(
+  stdout: unknown,
+  listener: ((event: ClaudeJsonlEvent) => void) | undefined,
+): void {
+  for (const event of parseJsonlEvents(stdout)) notifyEvent(listener, event);
+}
+
+function toApiRejection(parsed: ClaudeJsonlEvent | null): ClaudeApiRejectionError | null {
   if (!parsed || parsed.terminal_reason !== 'api_error' || parsed.total_cost_usd !== 0) {
     return null;
   }
   return new ClaudeApiRejectionError(parsed.api_error_status ?? null, parsed.result ?? '');
 }
 
-function toStreamAbort(parsed: ClaudeCliErrorJsonOutput | null): ClaudeStreamAbortedError | null {
+function toStreamAbort(parsed: ClaudeJsonlEvent | null): ClaudeStreamAbortedError | null {
   if (
     !parsed ||
     parsed.terminal_reason === undefined ||
@@ -149,7 +241,8 @@ export async function runClaudeHeadless(options: RunHeadlessOptions): Promise<Ru
     '--model',
     resolveModelId(options.model),
     '--output-format',
-    'json',
+    'stream-json',
+    '--verbose',
     // Headless dispatch must not inherit the operator's interactive advisorModel
     // preference: an advisor model incompatible with the request model makes the
     // CLI reject the call outright (HTTP 400) before any turn runs. Passing
@@ -171,23 +264,37 @@ export async function runClaudeHeadless(options: RunHeadlessOptions): Promise<Ru
   }
 
   let stdout: string;
+  let observingLiveStream = false;
   try {
-    // Output format validated against Claude Code CLI 2.1.x — re-check if it changes in future versions.
-    ({ stdout } = await execa('claude', args, {
+    // stream-json is the documented real-time format in Claude Code CLI 2.1.x.
+    const subprocess = execa('claude', args, {
       cwd: options.cwd,
       cancelSignal: options.signal,
-    }));
+    });
+    observingLiveStream = observeJsonlEvents(
+      (subprocess as unknown as { stdout?: unknown }).stdout,
+      options.onEvent,
+    );
+    ({ stdout } = await subprocess);
+    if (!observingLiveStream) replayEvents(stdout, options.onEvent);
   } catch (error) {
-    const parsed = parseCliStdoutJson(error);
+    if (!observingLiveStream && isExecaLikeError(error))
+      replayEvents(error.stdout, options.onEvent);
+    const parsed = isExecaLikeError(error) ? resultEventOf(parseJsonlEvents(error.stdout)) : null;
     throw (
       toApiRejection(parsed) ?? toStreamAbort(parsed) ?? toGenericExecutionError(error) ?? error
     );
   }
 
-  const parsed = JSON.parse(stdout) as ClaudeCliJsonOutput;
+  const parsed = resultEventOf(parseJsonlEvents(stdout));
+  if (!parsed?.session_id) {
+    throw new ClaudeCliExecutionError(
+      'the CLI exited successfully but produced no final result event',
+    );
+  }
 
   return {
     sessionId: parsed.session_id,
-    output: parsed.result,
+    output: parsed.result ?? '',
   };
 }

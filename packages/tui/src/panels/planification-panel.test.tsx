@@ -27,13 +27,17 @@ const config: AgentMeshConfig = {
   },
 };
 
-function architectEvent(state: AgentActivityEvent['state']): AgentActivityEvent {
+function architectEvent(
+  state: AgentActivityEvent['state'],
+  overrides: Partial<AgentActivityEvent> = {},
+): AgentActivityEvent {
   return {
     type: 'agent:activity',
     runId: 'run-1',
     agentId: 'architect-1',
     role: 'architect',
     state,
+    ...overrides,
   };
 }
 
@@ -82,6 +86,27 @@ describe('PlanificationPanel', () => {
       />,
     );
     expect(lastFrame()).toContain('Architect is thinking…');
+  });
+
+  it('shows the Architect live activity and file when detailed progress is available', () => {
+    const { lastFrame } = render(
+      <PlanificationPanel
+        run={run}
+        plan={null}
+        planError={null}
+        config={config}
+        latestArchitectEvent={architectEvent('using-tool', {
+          detail: 'Running tests',
+          tool: 'Shell',
+          file: 'src/auth.ts',
+        })}
+        width={100}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Architect · Running tests');
+    expect(frame).toContain('src/auth.ts');
+    expect(frame).not.toContain('Architect is thinking');
   });
 
   it('shows a clear failure message when the Architect fails, instead of a bare placeholder', () => {

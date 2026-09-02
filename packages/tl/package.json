@@ -1,6 +1,6 @@
 {
   "name": "@losina/tl",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Team Lead agent for ARCH: dispatches Workers and runs a task's automated checks.",
   "license": "MIT",
   "type": "module",

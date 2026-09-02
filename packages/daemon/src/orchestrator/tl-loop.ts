@@ -34,6 +34,7 @@ import {
   isHumanInterventionNeeded,
   isInfraFailure,
 } from '@losina/validator';
+import { activityFromProgress } from './agent-progress.js';
 import type { Mutex } from './mutex.js';
 import { RunAbortedError } from './run-aborted-error.js';
 import { resolveTaskRepoRoot } from './task-repo-root.js';
@@ -49,13 +50,13 @@ const MAX_INFRA_CHECK_RETRIES = 3;
 
 /**
  * Cap for automatic retries of a worker dispatch that failed for reasons the Worker had no part
- * in — either the CLI rejecting the call before any turn ran ($0/no-op billed) or its turn loop
- * getting cut off mid-response (some cost already billed but no usable output produced), for
- * whichever provider (Claude or Codex) that task's model routes to. Both are transient and
- * always safe to retry as-is. Deliberately separate from config.execution.maxRetries: that
- * budget caps content-correction rounds (failed checks, scope violations, review rejections), a
- * different concern from retrying an infrastructure-level dispatch failure that never produced
- * any output.
+ * in — either the CLI rejecting the call before any turn ran ($0/no-op billed), its turn loop
+ * getting cut off mid-response, or Codex reaching an explicitly configured execution timeout.
+ * Interrupted turns may have left useful partial files behind, so the retry deliberately stays
+ * inside this task cycle and reuses its worktree. Deliberately separate from
+ * config.execution.maxRetries: that budget caps content-correction rounds (failed checks, scope
+ * violations, review rejections), a different concern from recovering an infrastructure-level
+ * dispatch failure before validation or Architect review.
  */
 const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
 
@@ -273,6 +274,10 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
         humanMessage: correctionMarkdown === undefined ? humanMessage : undefined,
         signal,
         detectChanges: config.execution.useWorktrees ? undefined : getChangedFiles,
+        onProgress: (progress) =>
+          bus.emit(
+            activityFromProgress({ runId, agentId, role: 'worker', taskId: task.id }, progress),
+          ),
       });
       workerSessionId = dispatch.sessionId;
       await mergeWorkerSession(runDir, task.id, workerSessionId);

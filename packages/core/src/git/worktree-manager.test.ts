@@ -82,6 +82,33 @@ describe('git worktree lifecycle', () => {
     expect(second.branch).toBe('feat/TASK-001');
   });
 
+  it('reuses a failed task worktree and preserves its uncommitted changes', async () => {
+    const first = await createWorktree(repo, worktreesDir, 'TASK-001');
+    await writeFile(join(first.path, 'partial.txt'), 'keep this work\n', 'utf-8');
+
+    const retried = await createWorktree(repo, worktreesDir, 'TASK-001');
+
+    expect(retried).toEqual(first);
+    await expect(readFile(join(retried.path, 'partial.txt'), 'utf-8')).resolves.toBe(
+      'keep this work\n',
+    );
+  });
+
+  it('reattaches an existing feature branch when only the old worktree was removed', async () => {
+    const first = await createWorktree(repo, worktreesDir, 'TASK-001');
+    await writeFile(join(first.path, 'committed.txt'), 'preserved on branch\n', 'utf-8');
+    await execa('git', ['add', '-A'], { cwd: first.path });
+    await execa('git', ['commit', '-m', 'partial task work'], { cwd: first.path });
+    await removeWorktree(repo, first);
+
+    const retried = await createWorktree(repo, worktreesDir, 'TASK-001');
+
+    expect(retried).toEqual(first);
+    await expect(readFile(join(retried.path, 'committed.txt'), 'utf-8')).resolves.toBe(
+      'preserved on branch\n',
+    );
+  });
+
   it('keeps two task worktrees on independent branches from the same base', async () => {
     const a = await createWorktree(repo, worktreesDir, 'TASK-001');
     const b = await createWorktree(repo, worktreesDir, 'TASK-002');

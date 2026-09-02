@@ -4,6 +4,7 @@ import {
   CodexApiRejectionError,
   CodexCliExecutionError,
   CodexStreamAbortedError,
+  CodexTimeoutError,
   runCodexHeadless,
 } from './run-headless.js';
 
@@ -48,22 +49,49 @@ describe('runCodexHeadless', () => {
       '--skip-git-repo-check',
       '--json',
       '--model',
-      'gpt-5.1-codex',
+      'gpt-5.6-sol',
       '--cd',
       '/tmp/project',
-      'Add a function',
+      '-',
     ]);
-    expect(opts).toMatchObject({ cwd: '/tmp/project' });
+    expect(opts).toMatchObject({
+      cwd: '/tmp/project',
+      input: 'Add a function',
+    });
+    expect(opts).not.toHaveProperty('timeout');
+  });
+
+  it('reports every JSONL event through onEvent', async () => {
+    const events = [
+      { type: 'thread.started', thread_id: 'thread-1' },
+      { type: 'turn.started' },
+      {
+        type: 'item.started',
+        item: { type: 'command_execution', command: 'pnpm test' },
+      },
+      { type: 'turn.completed' },
+    ];
+    mockStdout(jsonl(...events));
+    const onEvent = vi.fn();
+
+    await runCodexHeadless({
+      prompt: 'p',
+      model: 'codex',
+      cwd: '/tmp',
+      onEvent,
+    });
+
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual(events);
   });
 
   it('resolves a short model alias before passing it to the CLI', async () => {
     mockStdout(jsonl({ type: 'thread.started', thread_id: 't' }, { type: 'turn.completed' }));
     await runCodexHeadless({ prompt: 'p', model: 'gpt5', cwd: '/tmp' });
     const [, args] = mockedExeca.mock.calls[0] ?? [];
-    expect(args).toContain('gpt-5.1');
+    expect(args).toContain('gpt-5.6-sol');
   });
 
-  it('appends --yolo for bypassPermissions', async () => {
+  it('uses the documented bypass flag for bypassPermissions', async () => {
     mockStdout(jsonl({ type: 'thread.started', thread_id: 't' }, { type: 'turn.completed' }));
     await runCodexHeadless({
       prompt: 'p',
@@ -72,7 +100,7 @@ describe('runCodexHeadless', () => {
       permissionMode: 'bypassPermissions',
     });
     const [, args] = mockedExeca.mock.calls[0] ?? [];
-    expect(args).toContain('--yolo');
+    expect(args).toContain('--dangerously-bypass-approvals-and-sandbox');
   });
 
   it('appends --full-auto for acceptEdits', async () => {
@@ -87,7 +115,7 @@ describe('runCodexHeadless', () => {
     expect(args).toContain('--full-auto');
   });
 
-  it('builds a resume invocation with the thread id before the prompt', async () => {
+  it('builds a resume invocation that also reads and closes stdin', async () => {
     mockStdout(jsonl({ type: 'thread.started', thread_id: 't' }, { type: 'turn.completed' }));
     await runCodexHeadless({
       prompt: 'continue',
@@ -95,8 +123,9 @@ describe('runCodexHeadless', () => {
       cwd: '/tmp',
       resumeSessionId: 'thread-0',
     });
-    const [, args] = mockedExeca.mock.calls[0] ?? [];
-    expect(args.slice(-3)).toEqual(['resume', 'thread-0', 'continue']);
+    const [, args, opts] = mockedExeca.mock.calls[0] ?? [];
+    expect(args.slice(-3)).toEqual(['resume', 'thread-0', '-']);
+    expect(opts).toMatchObject({ input: 'continue' });
   });
 
   it('forwards the AbortSignal as cancelSignal', async () => {
@@ -157,6 +186,30 @@ describe('runCodexHeadless', () => {
       expect(error.message).not.toContain('codex exec');
       expect(error.message).toContain('exit code 1');
     });
+  });
+
+  it('throws a short CodexTimeoutError when the hard subprocess timeout fires', async () => {
+    const secretPrompt = 'do not expose this prompt';
+    const execaError = Object.assign(new Error(`Command timed out: codex exec ${secretPrompt}`), {
+      stdout: '',
+      timedOut: true,
+      signal: 'SIGTERM',
+    });
+    mockedExeca.mockRejectedValue(execaError);
+
+    const promise = runCodexHeadless({
+      prompt: secretPrompt,
+      model: 'codex',
+      cwd: '/tmp',
+      timeoutMs: 30 * 60 * 1000,
+    });
+    await expect(promise).rejects.toBeInstanceOf(CodexTimeoutError);
+    await promise.catch((error: Error) => {
+      expect(error.message).toBe('Codex CLI timed out after 30 minutes.');
+      expect(error.message).not.toContain(secretPrompt);
+    });
+    const [, , options] = mockedExeca.mock.calls[0] ?? [];
+    expect(options).toMatchObject({ timeout: 30 * 60 * 1000 });
   });
 
   it('throws CodexCliExecutionError when the CLI exits 0 without ever emitting thread.started', async () => {

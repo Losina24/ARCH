@@ -5,13 +5,14 @@ import type { Stdin } from 'ink-testing-library';
 import { render } from 'ink-testing-library';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { detectInstalledProvidersAsync, listOpenCodeModels } = vi.hoisted(() => ({
+const { detectInstalledProvidersAsync, listCodexModels, listOpenCodeModels } = vi.hoisted(() => ({
   detectInstalledProvidersAsync: vi.fn(),
+  listCodexModels: vi.fn(),
   listOpenCodeModels: vi.fn(),
 }));
 vi.mock('@losina/agent-runtime', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@losina/agent-runtime')>();
-  return { ...actual, detectInstalledProvidersAsync, listOpenCodeModels };
+  return { ...actual, detectInstalledProvidersAsync, listCodexModels, listOpenCodeModels };
 });
 
 const { SettingsModal } = await import('./settings-modal.js');
@@ -52,10 +53,16 @@ function mockClient(overrides: Partial<ArchClient> = {}): ArchClient {
   } as unknown as ArchClient;
 }
 
-function renderModal(client: ArchClient, onClose = vi.fn()) {
+function renderModal(client: ArchClient, onClose = vi.fn(), onConfigChange = vi.fn()) {
   return render(
     <Box position="relative" width={100} height={30}>
-      <SettingsModal client={client} columns={100} rows={30} onClose={onClose} />
+      <SettingsModal
+        client={client}
+        columns={100}
+        rows={30}
+        onConfigChange={onConfigChange}
+        onClose={onClose}
+      />
     </Box>,
   );
 }
@@ -65,6 +72,7 @@ describe('SettingsModal', () => {
     detectInstalledProvidersAsync
       .mockReset()
       .mockResolvedValue(new Set(['claude', 'codex', 'opencode']));
+    listCodexModels.mockReset().mockResolvedValue([]);
     listOpenCodeModels.mockReset().mockResolvedValue([]);
   });
 
@@ -194,7 +202,8 @@ describe('SettingsModal', () => {
       execution: { maxConcurrency: 8, maxRetries: 5, useWorktrees: true },
     };
     const client = mockClient({ setConfig: vi.fn().mockResolvedValue(updated) });
-    const { lastFrame, stdin } = renderModal(client);
+    const onConfigChange = vi.fn();
+    const { lastFrame, stdin } = renderModal(client, vi.fn(), onConfigChange);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
     await press(stdin, 's');
@@ -210,6 +219,7 @@ describe('SettingsModal', () => {
       maxRetries: 3,
       useWorktrees: true,
     });
+    expect(onConfigChange).toHaveBeenCalledWith(updated);
     expect(lastFrame()).toContain('claude-opus-5-updated');
   });
 

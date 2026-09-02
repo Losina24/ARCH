@@ -3,6 +3,7 @@ import { loadRunSessions, saveRunSessions } from '@losina/core';
 import type { AgentMeshConfig } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import type { DaemonServerHandle } from '../server.js';
+import { activityFromProgress } from './agent-progress.js';
 import { getRunDir, persistRunMeta } from './persist.js';
 
 export interface GrillingPhaseParams {
@@ -60,6 +61,8 @@ export async function runGrillingPhase(params: GrillingPhaseParams): Promise<voi
       resumeSessionId: sessions.architectSessionId,
       priorAnswer: answer?.text,
       signal,
+      onProgress: (progress) =>
+        handle.broadcast(activityFromProgress({ runId, agentId, role: 'architect' }, progress)),
     });
 
     await saveRunSessions(runDir, { ...sessions, architectSessionId: result.sessionId });

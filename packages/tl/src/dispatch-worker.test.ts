@@ -84,6 +84,7 @@ describe('dispatchWorker', () => {
   it('builds a correction prompt when correctionMarkdown is set, and forwards resumeSessionId/signal', async () => {
     mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-2', output: 'Fixed.' });
     const controller = new AbortController();
+    const onProgress = vi.fn();
 
     await dispatchWorker({
       task,
@@ -93,6 +94,7 @@ describe('dispatchWorker', () => {
       correctionMarkdown: 'Handle negative numbers too.',
       resumeSessionId: 'previous-session',
       signal: controller.signal,
+      onProgress,
     });
 
     const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
@@ -102,6 +104,7 @@ describe('dispatchWorker', () => {
       model: 'sonnet',
       resumeSessionId: 'previous-session',
       signal: controller.signal,
+      onProgress,
       permissionMode: 'bypassPermissions',
     });
   });

@@ -4,10 +4,18 @@ import { describe, expect, it } from 'vitest';
 import { ConsolePanel } from './console-panel.js';
 
 const WIDTH = 80;
+const panelProps = {
+  width: WIDTH,
+  height: 20,
+  scrollOffset: 0,
+  onScrollMetrics: () => undefined,
+};
 
 describe('ConsolePanel', () => {
   it('shows the Architect and TL agents even with no activity yet', () => {
-    const { lastFrame } = render(<ConsolePanel events={[]} selectedAgentId={null} width={WIDTH} />);
+    const { lastFrame } = render(
+      <ConsolePanel events={[]} selectedAgentId={null} {...panelProps} />,
+    );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Architect');
     expect(frame).toContain('TL');
@@ -25,7 +33,7 @@ describe('ConsolePanel', () => {
       },
     ];
     const { lastFrame } = render(
-      <ConsolePanel events={events} selectedAgentId={null} width={WIDTH} />,
+      <ConsolePanel events={events} selectedAgentId={null} {...panelProps} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Worker 1');
@@ -34,7 +42,9 @@ describe('ConsolePanel', () => {
   });
 
   it('prompts to select an agent when none is selected', () => {
-    const { lastFrame } = render(<ConsolePanel events={[]} selectedAgentId={null} width={WIDTH} />);
+    const { lastFrame } = render(
+      <ConsolePanel events={[]} selectedAgentId={null} {...panelProps} />,
+    );
     expect(lastFrame()).toContain('Select an agent to access its terminal.');
   });
 
@@ -50,7 +60,7 @@ describe('ConsolePanel', () => {
       },
     ];
     const { lastFrame } = render(
-      <ConsolePanel events={events} selectedAgentId="worker-TASK-001" width={WIDTH} />,
+      <ConsolePanel events={events} selectedAgentId="worker-TASK-001" {...panelProps} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('❯ Worker 1');
@@ -77,13 +87,13 @@ describe('ConsolePanel', () => {
 
     const workerFrame =
       render(
-        <ConsolePanel events={events} selectedAgentId="worker-TASK-001" width={WIDTH} />,
+        <ConsolePanel events={events} selectedAgentId="worker-TASK-001" {...panelProps} />,
       ).lastFrame() ?? '';
     expect(workerFrame).toContain('sent prompt · TASK-001');
 
     const tlFrame =
       render(
-        <ConsolePanel events={events} selectedAgentId="tl-run-1" width={WIDTH} />,
+        <ConsolePanel events={events} selectedAgentId="tl-run-1" {...panelProps} />,
       ).lastFrame() ?? '';
     expect(tlFrame).not.toContain('sent prompt · TASK-001');
     expect(tlFrame).toContain('sent prompt');
@@ -101,7 +111,7 @@ describe('ConsolePanel', () => {
       },
     ];
     const { lastFrame } = render(
-      <ConsolePanel events={events} selectedAgentId="worker-TASK-001" width={WIDTH} />,
+      <ConsolePanel events={events} selectedAgentId="worker-TASK-001" {...panelProps} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('sent prompt');
@@ -127,9 +137,49 @@ describe('ConsolePanel', () => {
       },
     ];
     const { lastFrame } = render(
-      <ConsolePanel events={events} selectedAgentId="worker-TASK-001" width={WIDTH} />,
+      <ConsolePanel events={events} selectedAgentId="worker-TASK-001" {...panelProps} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Implemented the login page as requested.');
+  });
+
+  it('keeps the agent menu visible while only the selected transcript scrolls', () => {
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'agent:activity',
+        runId: 'run-1',
+        agentId: 'worker-TASK-001',
+        role: 'worker',
+        state: 'thinking',
+        taskId: 'TASK-001',
+      },
+      ...Array.from(
+        { length: 8 },
+        (_, index): ArchMeshEvent => ({
+          type: 'agent:message',
+          runId: 'run-1',
+          agentId: 'worker-TASK-001',
+          role: 'worker',
+          taskId: 'TASK-001',
+          text: `message-${index}`,
+        }),
+      ),
+    ];
+
+    const { lastFrame } = render(
+      <ConsolePanel
+        {...panelProps}
+        height={12}
+        events={events}
+        selectedAgentId="worker-TASK-001"
+        scrollOffset={7}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+
+    expect(frame).toContain('Architect');
+    expect(frame).toContain('❯ Worker 1');
+    expect(frame).not.toContain('message-0');
+    expect(frame).toContain('message-7');
   });
 });

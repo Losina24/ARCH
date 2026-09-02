@@ -119,6 +119,36 @@ describe('HomeView', () => {
     expect(lastFrame()).toContain('Describe your task and give instructions');
   });
 
+  it('refreshes the models hint immediately after saving settings', async () => {
+    const updated: AgentMeshConfig = {
+      ...config,
+      models: {
+        architectModel: 'gpt-5.6-sol',
+        tlModel: 'gpt-5.6-terra',
+        workerModel: 'gpt-5.6-luna',
+      },
+    };
+    const client = mockClient({ setConfig: vi.fn().mockResolvedValue(updated) });
+    const { lastFrame, stdin } = render(
+      <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
+    await type(stdin, '/settings');
+    await press(stdin, '\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Settings'));
+
+    await press(stdin, 's');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Saved.'));
+    await press(stdin, '\x1b');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('gpt-5.6-sol'));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('gpt-5.6-terra');
+    expect(frame).toContain('gpt-5.6-luna');
+    expect(frame).not.toContain('claude-opus-5');
+  });
+
   it('shows a floating command menu filtered by what is typed after /', async () => {
     const client = mockClient();
     const { lastFrame, stdin } = render(

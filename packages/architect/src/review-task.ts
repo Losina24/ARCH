@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { runAgentHeadless } from '@losina/agent-runtime';
+import { type AgentProgressEvent, runAgentHeadless } from '@losina/agent-runtime';
 import type { RunMeta } from '@losina/schemas';
 import { buildReviewPrompt } from './prompts.js';
 import { fileExists } from './util/file-exists.js';
@@ -16,6 +16,7 @@ export interface ReviewTaskInput {
   workerSummary: string;
   resumeSessionId?: string;
   signal?: AbortSignal;
+  onProgress?: (progress: AgentProgressEvent) => void;
 }
 
 export type ReviewVerdict = { approved: true } | { approved: false; correctionMarkdown: string };
@@ -53,6 +54,7 @@ export async function reviewTask(input: ReviewTaskInput): Promise<ReviewTaskOutp
     permissionMode: 'bypassPermissions',
     additionalDirs: [dirname(correctionFilePath)],
     signal: input.signal,
+    onProgress: input.onProgress,
   });
 
   if (await fileExists(correctionFilePath)) {

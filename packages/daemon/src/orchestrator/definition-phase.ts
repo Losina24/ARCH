@@ -3,6 +3,7 @@ import { loadRunSessions, saveRunSessions } from '@losina/core';
 import type { AgentMeshConfig } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import type { DaemonServerHandle } from '../server.js';
+import { activityFromProgress } from './agent-progress.js';
 import { getRunDir, persistRunMeta } from './persist.js';
 
 export interface DefinitionPhaseParams {
@@ -48,6 +49,8 @@ export async function runDefinitionPhase(params: DefinitionPhaseParams): Promise
       feedback,
       resumeSessionId: sessions.architectSessionId,
       signal,
+      onProgress: (progress) =>
+        handle.broadcast(activityFromProgress({ runId, agentId, role: 'architect' }, progress)),
     });
 
     await saveRunSessions(runDir, { ...sessions, architectSessionId: plan.sessionId });

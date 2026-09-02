@@ -3,13 +3,14 @@ import type { Stdin } from 'ink-testing-library';
 import { render } from 'ink-testing-library';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { detectInstalledProvidersAsync, listOpenCodeModels } = vi.hoisted(() => ({
+const { detectInstalledProvidersAsync, listCodexModels, listOpenCodeModels } = vi.hoisted(() => ({
   detectInstalledProvidersAsync: vi.fn(),
+  listCodexModels: vi.fn(),
   listOpenCodeModels: vi.fn(),
 }));
 vi.mock('@losina/agent-runtime', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@losina/agent-runtime')>();
-  return { ...actual, detectInstalledProvidersAsync, listOpenCodeModels };
+  return { ...actual, detectInstalledProvidersAsync, listCodexModels, listOpenCodeModels };
 });
 
 const { ModelPickerModal } = await import('./model-picker-modal.js');
@@ -52,6 +53,7 @@ describe('ModelPickerModal', () => {
     detectInstalledProvidersAsync
       .mockReset()
       .mockResolvedValue(new Set(['claude', 'codex', 'opencode']));
+    listCodexModels.mockReset().mockResolvedValue([]);
     listOpenCodeModels.mockReset().mockResolvedValue([]);
   });
 
@@ -107,7 +109,7 @@ describe('ModelPickerModal', () => {
     expect(lastFrame()).toContain('Select model — Codex');
     const frame = lastFrame() ?? '';
     const cursorLine = frame.split('\n').find((line) => line.includes('❯'));
-    expect(cursorLine).toContain('gpt-5.1');
+    expect(cursorLine).toContain('gpt-5.6-sol');
     expect(cursorLine).not.toContain('Custom');
   });
 
@@ -130,7 +132,7 @@ describe('ModelPickerModal', () => {
     const onSelect = vi.fn();
     // Starts on Codex so browsing to Claude Code's "Custom…" starts from an empty field
     // (prefill only kicks in for the model's own home provider).
-    const { lastFrame, stdin } = renderPicker('gpt-5.1', onSelect);
+    const { lastFrame, stdin } = renderPicker('gpt-5.6-sol', onSelect);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Select provider'));
     await tick(); // let ink's useInput effect resubscribe with the now-loaded closure
@@ -177,7 +179,7 @@ describe('ModelPickerModal', () => {
   it('still lists the current model’s provider even when its CLI is not detected as installed', async () => {
     detectInstalledProvidersAsync.mockResolvedValue(new Set(['claude']));
 
-    const { lastFrame } = renderPicker('gpt-5.1');
+    const { lastFrame } = renderPicker('gpt-5.6-sol');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Select provider'));
     await tick(); // let ink's useInput effect resubscribe with the now-loaded closure
@@ -194,6 +196,21 @@ describe('ModelPickerModal', () => {
     expect(lastFrame()).toContain('Claude Code');
     expect(lastFrame()).toContain('Codex');
     expect(lastFrame()).toContain('OpenCode');
+  });
+
+  it('lists the live Codex catalog instead of the static fallback', async () => {
+    listCodexModels.mockResolvedValue(['gpt-5.6-sol', 'gpt-5.5']);
+    const { lastFrame, stdin } = renderPicker('claude-sonnet-5');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Select provider'));
+    await tick(); // let ink's useInput effect resubscribe with the now-loaded closure
+    await press(stdin, '\x1b[B'); // Claude Code -> Codex
+    await press(stdin, '\r');
+
+    expect(lastFrame()).toContain('Select model — Codex');
+    expect(lastFrame()).toContain('gpt-5.6-sol');
+    expect(lastFrame()).toContain('gpt-5.5');
+    expect(lastFrame()).not.toContain('gpt-5.6-luna');
   });
 
   it('lists the live-detected OpenCode models instead of the static placeholder', async () => {

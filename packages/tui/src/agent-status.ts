@@ -54,11 +54,18 @@ function categoryFor(event: AgentActivityEvent | undefined): AgentStatusCategory
 
 function statusTextFor(event: AgentActivityEvent | undefined, role: AgentRole): string {
   if (!event) return 'Waiting';
-  if (event.taskId && (event.state === 'thinking' || event.state === 'using-tool')) {
-    return `${ROLE_VERB[role]} ${event.taskId}`;
-  }
   if (isAwaitingHumanPause(event)) {
     return `Needs your help · ${event.taskId}`;
+  }
+  if (event.state === 'thinking' || event.state === 'using-tool') {
+    const detail =
+      event.detail ??
+      (event.state === 'using-tool' && event.tool ? `Using ${event.tool}` : undefined);
+    if (detail) {
+      const withFile = event.file ? `${detail} · ${event.file}` : detail;
+      return event.taskId ? `${withFile} · ${event.taskId}` : withFile;
+    }
+    if (event.taskId) return `${ROLE_VERB[role]} ${event.taskId}`;
   }
   switch (event.state) {
     case 'spawning':
@@ -84,37 +91,74 @@ function statusTextFor(event: AgentActivityEvent | undefined, role: AgentRole): 
  * A worker agentId is `worker-${taskId}` — one per task, never shared — but the "Worker N" label
  * is a display concept bound to real concurrency: once a task reaches a terminal status
  * (done/failed/awaiting_human), its slot number is freed and handed to the next new worker
- * agentId, instead of growing forever with every task ever dispatched. `workerOrder` therefore
- * maps EVERY worker agentId ever seen to the slot it held (permanent record, for buildAgentLabels
- * and for grouping same-slot agentIds together); `currentSlotAgent` maps each slot number to
- * whichever agentId currently occupies it (for deriveAgentStatuses' bounded roster).
+ * agentId, instead of growing forever with every task ever dispatched. `workerOrder` maps every
+ * worker agentId to its latest slot (a resumed agent may move if its old slot was reused), while
+ * `currentSlotAgent` maps each slot number to whichever agentId currently occupies it.
  */
 function indexEvents(events: ArchMeshEvent[]) {
   const latestByAgent = new Map<string, AgentActivityEvent>();
   const workerOrder = new Map<string, number>();
   const currentSlotAgent = new Map<number, string>();
   const taskToAgent = new Map<string, string>();
-  const freeSlots: number[] = [];
+  // A Set is essential here: the same task can legitimately enter `failed` more than once
+  // across manual retries. Recording the same free slot twice would let two later workers both
+  // consume (and overwrite) that slot, making concurrent tasks all appear as "Worker 1".
+  const freeSlots = new Set<number>();
   let slotsCreated = 0;
+
+  const assignSlot = (agentId: string): number => {
+    const reusableSlot = [...freeSlots].sort((a, b) => a - b)[0];
+    const slot = reusableSlot ?? ++slotsCreated;
+    freeSlots.delete(slot);
+    workerOrder.set(agentId, slot);
+    currentSlotAgent.set(slot, agentId);
+    return slot;
+  };
+
+  const occupySlot = (agentId: string): number => {
+    const previousSlot = workerOrder.get(agentId);
+    if (previousSlot === undefined) return assignSlot(agentId);
+
+    // A failed/awaiting task may resume with the same agentId. If nobody reused its old slot,
+    // simply claim it again. If another task now owns it, give the resumed agent another free
+    // slot so two live workers can never share one display identity.
+    if (currentSlotAgent.get(previousSlot) === agentId) {
+      freeSlots.delete(previousSlot);
+      return previousSlot;
+    }
+    return assignSlot(agentId);
+  };
+
+  const releaseSlot = (agentId: string | undefined) => {
+    if (agentId === undefined) return;
+    const slot = workerOrder.get(agentId);
+    if (slot !== undefined && currentSlotAgent.get(slot) === agentId) freeSlots.add(slot);
+  };
 
   for (const event of events) {
     if (event.type === 'agent:activity') {
       latestByAgent.set(event.agentId, event);
       if (event.role === 'worker') {
         if (event.taskId) taskToAgent.set(event.taskId, event.agentId);
-        if (!workerOrder.has(event.agentId)) {
-          freeSlots.sort((a, b) => a - b);
-          const slot = freeSlots.length > 0 ? (freeSlots.shift() as number) : ++slotsCreated;
-          workerOrder.set(event.agentId, slot);
-          currentSlotAgent.set(slot, event.agentId);
-        }
+        if (!workerOrder.has(event.agentId)) occupySlot(event.agentId);
+        else if (
+          event.state === 'spawning' ||
+          event.state === 'thinking' ||
+          event.state === 'using-tool'
+        )
+          occupySlot(event.agentId);
+
+        // A setup/dispatch failure can emit the terminal task status before the first worker
+        // activity, when taskToAgent was not known yet. Release on the worker event as well so
+        // that ordering does not leak a permanently occupied slot.
+        if (event.state === 'failed' || isAwaitingHumanPause(event)) releaseSlot(event.agentId);
       }
       continue;
     }
-    if (event.type === 'task:status-changed' && TERMINAL_TASK_STATUSES.has(event.status)) {
+    if (event.type === 'task:status-changed') {
       const agentId = taskToAgent.get(event.taskId);
-      const slot = agentId === undefined ? undefined : workerOrder.get(agentId);
-      if (slot !== undefined) freeSlots.push(slot);
+      if (TERMINAL_TASK_STATUSES.has(event.status)) releaseSlot(agentId);
+      else if (event.status === 'in_progress' && agentId !== undefined) occupySlot(agentId);
     }
   }
 
