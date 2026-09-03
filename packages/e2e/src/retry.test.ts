@@ -60,7 +60,16 @@ describe('correction and retry', () => {
         {
           id: 'TASK-001',
           title: 'Write marker file',
-          checks: [{ name: 'marker-exists', command: 'test', args: ['-f', 'marker.txt'] }],
+          // Not the POSIX `test -f` builtin: it doesn't exist as an executable on Windows, and
+          // these checks are run directly via execa (no shell), so a bare `test` there just
+          // fails with "command not found" instead of ever passing.
+          checks: [
+            {
+              name: 'marker-exists',
+              command: 'node',
+              args: ['-e', "process.exit(require('fs').existsSync('marker.txt') ? 0 : 1)"],
+            },
+          ],
         },
       ],
     });
@@ -348,7 +357,16 @@ describe('human-driven retry', () => {
         {
           id: 'TASK-001',
           title: 'Write marker file',
-          checks: [{ name: 'marker-exists', command: 'test', args: ['-f', 'marker.txt'] }],
+          // Not the POSIX `test -f` builtin: it doesn't exist as an executable on Windows, and
+          // these checks are run directly via execa (no shell), so a bare `test` there just
+          // fails with "command not found" instead of ever passing.
+          checks: [
+            {
+              name: 'marker-exists',
+              command: 'node',
+              args: ['-e', "process.exit(require('fs').existsSync('marker.txt') ? 0 : 1)"],
+            },
+          ],
         },
         { id: 'TASK-002', title: 'Write follow-up file', dependsOn: ['TASK-001'] },
       ],

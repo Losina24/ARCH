@@ -22,6 +22,10 @@ describe('git diff/stage/commit helpers', () => {
     await execa('git', ['init'], { cwd: repo });
     await execa('git', ['config', 'user.email', 'arch-test@example.com'], { cwd: repo });
     await execa('git', ['config', 'user.name', 'ARCH Test'], { cwd: repo });
+    // Otherwise a machine-wide core.autocrlf=true (common on Windows) rewrites LF to CRLF on
+    // checkout, and the exact-bytes assertions below fail for a reason that has nothing to do
+    // with the helpers under test.
+    await execa('git', ['config', 'core.autocrlf', 'false'], { cwd: repo });
     await writeFile(join(repo, 'README.md'), '# initial\n', 'utf-8');
     await execa('git', ['add', '-A'], { cwd: repo });
     await execa('git', ['commit', '-m', 'initial commit'], { cwd: repo });

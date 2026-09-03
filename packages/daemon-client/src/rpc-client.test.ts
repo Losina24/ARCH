@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { type Server, type Socket, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DaemonRpcClient } from './rpc-client.js';
 
@@ -19,7 +19,10 @@ describe('DaemonRpcClient', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'arch-rpc-client-test-'));
-    socketPath = join(dir, 'daemon.sock');
+    // Real AF_UNIX sockets can fail to bind on Windows (EACCES) regardless of directory
+    // permissions — named pipes are the platform's native, reliable local-IPC mechanism.
+    socketPath =
+      process.platform === 'win32' ? `\\\\.\\pipe\\${basename(dir)}` : join(dir, 'daemon.sock');
     serverSockets = [];
     server = createServer((socket) => {
       serverSockets.push(socket);
@@ -32,6 +35,16 @@ describe('DaemonRpcClient', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  // A client's own 'connect' event can resolve before the server has accepted it (the two sides
+  // aren't synchronous over a Windows named pipe the way they are over a Unix socket) — every
+  // test below reaches into `serverSockets[0]` right after connecting, so wait for the server to
+  // have actually registered it first.
+  async function connectClient(): Promise<DaemonRpcClient> {
+    const client = await DaemonRpcClient.connect(socketPath);
+    await vi.waitFor(() => expect(serverSockets.length).toBeGreaterThan(0));
+    return client;
+  }
+
   function nextRequest(socket: Socket): Promise<RequestEnvelope> {
     return new Promise((resolve) => {
       socket.once('data', (chunk: Buffer) => {
@@ -41,7 +54,7 @@ describe('DaemonRpcClient', () => {
   }
 
   it('sends id/method/payload and resolves the matching result', async () => {
-    const client = await DaemonRpcClient.connect(socketPath);
+    const client = await connectClient();
     const requestPromise = client.request('run.list', { foo: 'bar' });
 
     const line = await nextRequest(serverSockets[0] as Socket);
@@ -56,7 +69,7 @@ describe('DaemonRpcClient', () => {
   });
 
   it('rejects the pending request when the response carries an error', async () => {
-    const client = await DaemonRpcClient.connect(socketPath);
+    const client = await connectClient();
     const requestPromise = client.request('run.get', { runId: 'missing' });
 
     const line = await nextRequest(serverSockets[0] as Socket);
@@ -69,7 +82,7 @@ describe('DaemonRpcClient', () => {
   });
 
   it('correlates concurrent requests by id, independent of response order', async () => {
-    const client = await DaemonRpcClient.connect(socketPath);
+    const client = await connectClient();
     const p1 = client.request('a', {});
     const p2 = client.request('b', {});
 
@@ -101,7 +114,7 @@ describe('DaemonRpcClient', () => {
   });
 
   it('dispatches event lines to registered handlers until unsubscribed', async () => {
-    const client = await DaemonRpcClient.connect(socketPath);
+    const client = await connectClient();
     const received: unknown[] = [];
     const unsubscribe = client.onEvent((event) => received.push(event));
 
@@ -119,7 +132,7 @@ describe('DaemonRpcClient', () => {
   });
 
   it('rejects pending requests when the connection closes before a response arrives', async () => {
-    const client = await DaemonRpcClient.connect(socketPath);
+    const client = await connectClient();
     const requestPromise = client.request('daemon.shutdown', {});
 
     await nextRequest(serverSockets[0] as Socket);
@@ -129,7 +142,7 @@ describe('DaemonRpcClient', () => {
   });
 
   it('parses multiple lines delivered in a single chunk', async () => {
-    const client = await DaemonRpcClient.connect(socketPath);
+    const client = await connectClient();
     const received: unknown[] = [];
     client.onEvent((event) => received.push(event));
 

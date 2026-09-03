@@ -28,7 +28,9 @@ export type WorkerHandler = (
 ) => Promise<string | undefined> | void | string;
 export type ReviewVerdictSpec = 'approve' | { correctionMarkdown: string };
 
-const RUN_ID_PATTERN = /\/runs\/([^/]+)\//;
+// Paths embedded in real prompts come from `path.join`, so on Windows they're
+// backslash-separated (e.g. "...\runs\<id>\project.md") rather than the POSIX form.
+const RUN_ID_PATTERN = /[/\\]runs[/\\]([^/\\]+)[/\\]/;
 const REVIEW_TASK_ID_PATTERN = /implementing task\s+"([^"]+)"/;
 const CORRECTION_FILE_PATTERN = /exactly this path: "([^"]+)"/;
 

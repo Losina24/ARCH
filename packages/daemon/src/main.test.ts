@@ -109,10 +109,12 @@ describe('startDaemon', () => {
 
   beforeEach(async () => {
     cwd = await mkdtemp(join(tmpdir(), 'arch-main-test-'));
-    // archDir/socketPath now live under ~/.arch (os.homedir() reads $HOME on POSIX) — stub it
-    // so these tests never touch the real developer machine's ~/.arch.
+    // archDir/socketPath now live under ~/.arch (os.homedir() reads $HOME on POSIX,
+    // %USERPROFILE% on Windows) — stub both so these tests never touch the real developer
+    // machine's ~/.arch.
     homeDir = await mkdtemp(join(tmpdir(), 'arch-main-test-home-'));
     process.env.HOME = homeDir;
+    process.env.USERPROFILE = homeDir;
   });
 
   afterEach(async () => {

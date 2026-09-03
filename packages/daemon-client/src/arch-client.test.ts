@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { type DaemonServerHandle, startDaemonServer } from '@losina/daemon';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArchClient } from './arch-client.js';
@@ -14,10 +14,19 @@ describe('ArchClient', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'arch-arch-client-test-'));
-    socketPath = join(dir, 'daemon.sock');
+    // Real AF_UNIX sockets can fail to bind on Windows (EACCES) regardless of directory
+    // permissions — named pipes are the platform's native, reliable local-IPC mechanism.
+    socketPath =
+      process.platform === 'win32' ? `\\\\.\\pipe\\${basename(dir)}` : join(dir, 'daemon.sock');
     handleRequest = vi.fn(async (method: string, payload: unknown) => ({ method, payload }));
-    handle = await startDaemonServer(socketPath, handleRequest);
+    const onClientCountChange = vi.fn();
+    handle = await startDaemonServer(socketPath, handleRequest, { onClientCountChange });
     client = await ArchClient.connect(socketPath);
+    // A client's own 'connect' event can resolve before the server has registered it (the two
+    // sides aren't synchronous over a Windows named pipe the way they are over a Unix socket) —
+    // wait for the server's own bookkeeping so a broadcast sent right after connecting isn't
+    // sent to an empty set.
+    await vi.waitFor(() => expect(onClientCountChange).toHaveBeenCalledWith(1));
   });
 
   afterEach(async () => {

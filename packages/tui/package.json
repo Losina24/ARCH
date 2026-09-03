@@ -23,7 +23,7 @@
   "bugs": "https://github.com/Losina24/ARCH/issues",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "postbuild": "chmod +x dist/bin.js",
+    "postbuild": "node -e \"require('fs').chmodSync('dist/bin.js', 0o755)\"",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"

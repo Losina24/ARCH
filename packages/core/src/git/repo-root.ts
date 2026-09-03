@@ -1,6 +1,6 @@
 import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, normalize, resolve } from 'node:path';
 import { execa } from 'execa';
 
 /**
@@ -14,7 +14,11 @@ import { execa } from 'execa';
 export async function resolveRepoRoot(cwd: string): Promise<string> {
   try {
     const { stdout } = await execa('git', ['rev-parse', '--show-toplevel'], { cwd });
-    return stdout.trim();
+    // Git for Windows always prints forward slashes (e.g. "C:/Users/..."), regardless of the
+    // native separator — normalize so this matches every other path Node hands back on this
+    // platform. Without it, two equal directories can hash/compare unequal downstream (e.g. the
+    // daemon's socket path derivation) purely because of which code produced the string.
+    return normalize(stdout.trim());
   } catch {
     throw new Error(
       `"${cwd}" is not inside a git repository (or any of its parent directories). Run ARCH from inside a git repository, or pass --cwd pointing to one.`,

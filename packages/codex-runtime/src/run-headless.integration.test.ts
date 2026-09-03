@@ -13,14 +13,31 @@ afterEach(async () => {
   fakeBinDir = undefined;
 });
 
+// A bare, extension-less, shebang'd file (the POSIX way to fake a PATH executable) loses to a
+// real `codex` binary elsewhere on PATH on Windows: PATHEXT-based resolution matches every
+// directory against `.COM`/`.EXE`/`.BAT`/`.CMD`/etc first and only falls back to trying the bare
+// filename if nothing on the whole PATH matched any extension — so a real codex install would
+// win even though this fake bin dir is prepended. A `.cmd` shim is matched during that same
+// extension pass, so it wins the race instead.
+async function writeFakeExecutable(dir: string, name: string, script: string): Promise<void> {
+  if (process.platform === 'win32') {
+    const scriptPath = join(dir, `${name}.js`);
+    await writeFile(scriptPath, script, 'utf-8');
+    await writeFile(join(dir, `${name}.cmd`), `@echo off\r\nnode "${scriptPath}" %*\r\n`, 'utf-8');
+    return;
+  }
+  const binPath = join(dir, name);
+  await writeFile(binPath, `#!/usr/bin/env node\n${script}`, 'utf-8');
+  await chmod(binPath, 0o755);
+}
+
 describe('runCodexHeadless subprocess integration', () => {
   it('delivers the complete prompt through stdin, closes it, and keeps it out of argv', async () => {
     fakeBinDir = await mkdtemp(join(tmpdir(), 'arch-fake-codex-'));
-    const fakeCodexPath = join(fakeBinDir, 'codex');
-    await writeFile(
-      fakeCodexPath,
-      `#!/usr/bin/env node
-let input = '';
+    await writeFakeExecutable(
+      fakeBinDir,
+      'codex',
+      `let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
@@ -35,9 +52,7 @@ process.stdin.on('end', () => {
   console.log(JSON.stringify({ type: 'turn.completed' }));
 });
 `,
-      'utf-8',
     );
-    await chmod(fakeCodexPath, 0o755);
     process.env.PATH = `${fakeBinDir}${delimiter}${originalPath ?? ''}`;
 
     const prompt = 'prompt with spaces\nand a second line';
@@ -57,11 +72,10 @@ process.stdin.on('end', () => {
 
   it('delivers JSONL events before the subprocess has finished', async () => {
     fakeBinDir = await mkdtemp(join(tmpdir(), 'arch-fake-codex-stream-'));
-    const fakeCodexPath = join(fakeBinDir, 'codex');
-    await writeFile(
-      fakeCodexPath,
-      `#!/usr/bin/env node
-process.stdin.resume();
+    await writeFakeExecutable(
+      fakeBinDir,
+      'codex',
+      `process.stdin.resume();
 process.stdin.on('end', () => {
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 'stream-thread' }));
   console.log(JSON.stringify({ type: 'turn.started' }));
@@ -78,9 +92,7 @@ process.stdin.on('end', () => {
   }, 150);
 });
 `,
-      'utf-8',
     );
-    await chmod(fakeCodexPath, 0o755);
     process.env.PATH = `${fakeBinDir}${delimiter}${originalPath ?? ''}`;
 
     let markProgressSeen: (() => void) | undefined;

@@ -13,22 +13,30 @@ async function initRepoAt(dir: string): Promise<void> {
   await execa('git', ['init', '--initial-branch=main'], { cwd: dir });
   await execa('git', ['config', 'user.email', 'arch-e2e@example.com'], { cwd: dir });
   await execa('git', ['config', 'user.name', 'ARCH E2E'], { cwd: dir });
+  // Otherwise a machine-wide core.autocrlf=true (common on Windows) rewrites LF to CRLF on
+  // checkout, and every exact-bytes assertion in these e2e tests fails for a reason that has
+  // nothing to do with ARCH's own behavior.
+  await execa('git', ['config', 'core.autocrlf', 'false'], { cwd: dir });
 
   await writeFile(join(dir, 'README.md'), '# ARCH e2e fixture repository\n', 'utf-8');
   await execa('git', ['add', '-A'], { cwd: dir });
   await execa('git', ['commit', '-m', 'chore: initial commit'], { cwd: dir });
 }
 
-// archDir/socketPath/configPath now live under ~/.arch (os.homedir() reads $HOME on POSIX) —
-// stub it per fixture so e2e runs never touch the real developer machine's ~/.arch.
+// archDir/socketPath/configPath now live under ~/.arch (os.homedir() reads $HOME on POSIX,
+// %USERPROFILE% on Windows) — stub both per fixture so e2e runs never touch the real developer
+// machine's ~/.arch.
 async function stubHome(): Promise<{ homeDir: string; restore: () => Promise<void> }> {
   const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
   const homeDir = await mkdtemp(join(tmpdir(), 'arch-e2e-home-'));
   process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
   return {
     homeDir,
     restore: async () => {
       process.env.HOME = previousHome;
+      process.env.USERPROFILE = previousUserProfile;
       await rm(homeDir, { recursive: true, force: true });
     },
   };

@@ -20,6 +20,7 @@ describe('runGrillingRound', () => {
     cwd = await mkdtemp(join(tmpdir(), 'arch-grilling-test-'));
     homeDir = await mkdtemp(join(tmpdir(), 'arch-grilling-test-home-'));
     process.env.HOME = homeDir;
+    process.env.USERPROFILE = homeDir;
     run = {
       runId: 'run-1',
       title: 'Add add(a, b)',
