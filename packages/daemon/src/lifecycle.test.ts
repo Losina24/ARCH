@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { getArchPaths } from '@losina/config';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -23,7 +23,10 @@ describe('isDaemonAlive', () => {
   });
 
   it('is true when a server is listening on the socket path', async () => {
-    const socketPath = join(dir, 'daemon.sock');
+    // Real AF_UNIX sockets can fail to bind on Windows (EACCES) regardless of directory
+    // permissions — named pipes are the platform's native, reliable local-IPC mechanism.
+    const socketPath =
+      process.platform === 'win32' ? `\\\\.\\pipe\\${basename(dir)}` : join(dir, 'daemon.sock');
     const server = createServer();
     await new Promise<void>((resolve) => server.listen(socketPath, resolve));
 
@@ -48,10 +51,14 @@ describe('spawnDaemonDetached', () => {
     // test never writes to the real developer machine's ~/.arch.
     homeDir = await mkdtemp(join(tmpdir(), 'arch-lifecycle-spawn-test-home-'));
     process.env.HOME = homeDir;
+    process.env.USERPROFILE = homeDir;
   });
 
   afterEach(async () => {
-    await rm(cwd, { recursive: true, force: true });
+    // On Windows, the detached child spawned in the test below can briefly still hold its cwd
+    // open after exiting, which turns an immediate rmdir into EBUSY — retry past that instead
+    // of racing it.
+    await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     await rm(homeDir, { recursive: true, force: true });
   });
 

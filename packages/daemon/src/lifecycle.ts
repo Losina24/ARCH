@@ -20,7 +20,12 @@ export function spawnDaemonDetached(daemonEntrypoint: string, cwd: string): void
   mkdirSync(archDir, { recursive: true });
   const logFd = openSync(join(archDir, 'daemon.log'), 'a');
 
-  const child = spawn(process.execPath, [daemonEntrypoint], {
+  // Pass `cwd` explicitly rather than letting the child fall back to its own `process.cwd()`:
+  // on Windows, `git rev-parse --show-toplevel` (used to resolve `cwd` upstream) returns
+  // forward-slash paths while the OS normalizes a spawned child's own cwd query to backslashes.
+  // getArchPaths hashes the raw string, so that mismatch makes the child bind a different
+  // socket/pipe name than the one the parent is polling, and every command times out.
+  const child = spawn(process.execPath, [daemonEntrypoint, cwd], {
     cwd,
     detached: true,
     stdio: ['ignore', logFd, logFd],

@@ -62,9 +62,9 @@ describe('App', () => {
     // splash (prompt box, etc.) appears, so this needs more than the default timeout.
     await vi.waitFor(
       () => expect(lastFrame()).toContain('Describe your task and give instructions'),
-      { timeout: 3000 },
+      { timeout: 8000 },
     );
-  });
+  }, 10_000);
 
   it('does not replay the boot splash animation when returning to Home from a run', async () => {
     const run: RunMeta = {
@@ -96,7 +96,7 @@ describe('App', () => {
 
     await vi.waitFor(
       () => expect(lastFrame()).toContain('Describe your task and give instructions'),
-      { timeout: 3000 },
+      { timeout: 8000 },
     );
 
     await type(stdin, 'Add a login page');
@@ -108,5 +108,5 @@ describe('App', () => {
     // straight to 'splash' — no useEffect/animation frame is needed for the prompt to appear,
     // so asserting immediately (no waitFor) proves the boot animation never got a chance to run.
     expect(lastFrame()).toContain('Describe your task and give instructions');
-  });
+  }, 10_000);
 });

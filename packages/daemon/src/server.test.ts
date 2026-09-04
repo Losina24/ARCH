@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { type Socket, connect } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DaemonServerHandle, startDaemonServer } from './server.js';
 
@@ -36,7 +36,10 @@ describe('startDaemonServer', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'arch-server-test-'));
-    socketPath = join(dir, 'daemon.sock');
+    // Real AF_UNIX sockets can fail to bind on Windows (EACCES) regardless of directory
+    // permissions — named pipes are the platform's native, reliable local-IPC mechanism.
+    socketPath =
+      process.platform === 'win32' ? `\\\\.\\pipe\\${basename(dir)}` : join(dir, 'daemon.sock');
   });
 
   afterEach(async () => {
@@ -78,10 +81,15 @@ describe('startDaemonServer', () => {
   });
 
   it('broadcasts an event to every connected socket', async () => {
-    handle = await startDaemonServer(socketPath, async () => ({}));
+    const onClientCountChange = vi.fn();
+    handle = await startDaemonServer(socketPath, async () => ({}), { onClientCountChange });
 
     const socketA = await connectSocket(socketPath);
     const socketB = await connectSocket(socketPath);
+    // A client's own 'connect' event can resolve before the server has registered it (the two
+    // sides aren't synchronous over a Windows named pipe the way they are over a Unix socket) —
+    // wait for the server's own bookkeeping so the broadcast below isn't sent to an empty set.
+    await vi.waitFor(() => expect(onClientCountChange).toHaveBeenLastCalledWith(2));
 
     const eventA = readOneLine(socketA);
     const eventB = readOneLine(socketB);
@@ -103,6 +111,9 @@ describe('startDaemonServer', () => {
 
     const disconnected = await connectSocket(socketPath);
     const connected = await connectSocket(socketPath);
+    // See the comment in the broadcast test above: wait for the server to have registered both
+    // clients before tearing one down, or the broadcast below can race the server's bookkeeping.
+    await vi.waitFor(() => expect(onClientCountChange).toHaveBeenLastCalledWith(2));
     const event = readOneLine(connected);
 
     disconnected.destroy();

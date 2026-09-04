@@ -13,14 +13,31 @@ afterEach(async () => {
   fakeBinDir = undefined;
 });
 
+// A bare, extension-less, shebang'd file (the POSIX way to fake a PATH executable) loses to a
+// real `claude` binary elsewhere on PATH on Windows: PATHEXT-based resolution matches every
+// directory against `.COM`/`.EXE`/`.BAT`/`.CMD`/etc first and only falls back to trying the bare
+// filename if nothing on the whole PATH matched any extension — so a real claude.exe installed
+// for local dev wins even though this fake bin dir is prepended. A `.cmd` shim is matched during
+// that same extension pass, so it wins the race instead.
+async function writeFakeExecutable(dir: string, name: string, script: string): Promise<void> {
+  if (process.platform === 'win32') {
+    const scriptPath = join(dir, `${name}.js`);
+    await writeFile(scriptPath, script, 'utf-8');
+    await writeFile(join(dir, `${name}.cmd`), `@echo off\r\nnode "${scriptPath}" %*\r\n`, 'utf-8');
+    return;
+  }
+  const binPath = join(dir, name);
+  await writeFile(binPath, `#!/usr/bin/env node\n${script}`, 'utf-8');
+  await chmod(binPath, 0o755);
+}
+
 describe('runClaudeHeadless subprocess integration', () => {
   it('delivers stream-json events before the subprocess has finished', async () => {
     fakeBinDir = await mkdtemp(join(tmpdir(), 'arch-fake-claude-stream-'));
-    const fakeClaudePath = join(fakeBinDir, 'claude');
-    await writeFile(
-      fakeClaudePath,
-      `#!/usr/bin/env node
-console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'stream-session' }));
+    await writeFakeExecutable(
+      fakeBinDir,
+      'claude',
+      `console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'stream-session' }));
 console.log(JSON.stringify({
   type: 'assistant',
   message: {
@@ -31,9 +48,7 @@ setTimeout(() => {
   console.log(JSON.stringify({ type: 'result', session_id: 'stream-session', result: 'done' }));
 }, 150);
 `,
-      'utf-8',
     );
-    await chmod(fakeClaudePath, 0o755);
     process.env.PATH = `${fakeBinDir}${delimiter}${originalPath ?? ''}`;
 
     let markProgressSeen: (() => void) | undefined;

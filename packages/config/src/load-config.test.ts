@@ -14,9 +14,11 @@ describe('loadConfig / saveConfig', () => {
   beforeEach(async () => {
     cwd = await mkdtemp(join(tmpdir(), 'arch-config-test-'));
     // The config now lives under ~/.arch/projects/<slug>/, derived from os.homedir() ($HOME on
-    // POSIX) — stub it so these tests never touch the real developer machine's ~/.arch.
+    // POSIX, %USERPROFILE% on Windows) — stub both so these tests never touch the real
+    // developer machine's ~/.arch.
     homeDir = await mkdtemp(join(tmpdir(), 'arch-config-test-home-'));
     process.env.HOME = homeDir;
+    process.env.USERPROFILE = homeDir;
   });
 
   afterEach(async () => {

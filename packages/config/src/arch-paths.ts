@@ -21,11 +21,21 @@ function projectSlug(cwd: string): string {
   return `${name}-${hash}`;
 }
 
+// On Windows, real AF_UNIX sockets are unreliable across machines/security software (they can
+// fail to bind with EACCES even with a writable directory). Named pipes are the platform's
+// native, universally-supported local-IPC mechanism, and live in their own namespace rather than
+// on disk, so they don't need to sit under archDir.
+function socketPathFor(archDir: string, slug: string): string {
+  if (process.platform === 'win32') return `\\\\.\\pipe\\arch-${slug}`;
+  return join(archDir, 'daemon.sock');
+}
+
 export function getArchPaths(cwd: string): ArchPaths {
-  const archDir = join(homedir(), ARCH_HOME_DIRNAME, 'projects', projectSlug(cwd));
+  const slug = projectSlug(cwd);
+  const archDir = join(homedir(), ARCH_HOME_DIRNAME, 'projects', slug);
   return {
     archDir,
-    socketPath: join(archDir, 'daemon.sock'),
+    socketPath: socketPathFor(archDir, slug),
     runsDir: join(archDir, 'runs'),
     configPath: join(archDir, CONFIG_FILENAME),
   };

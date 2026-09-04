@@ -36,9 +36,13 @@ export async function startDaemonServer(
   options: StartDaemonServerOptions = {},
 ): Promise<DaemonServerHandle> {
   const { onClientCountChange } = options;
-  await unlink(socketPath).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT') throw error;
-  });
+  // Windows named pipes (\\.\pipe\...) aren't filesystem entries — there's nothing to unlink,
+  // and the OS reclaims the name once no server holds it open.
+  if (!socketPath.startsWith('\\\\.\\pipe\\')) {
+    await unlink(socketPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
 
   const sockets = new Set<Socket>();
 

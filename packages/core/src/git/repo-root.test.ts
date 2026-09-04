@@ -25,7 +25,7 @@ describe('resolveRepoRoot', () => {
 
   it('resolves the repo root when cwd is a subdirectory', async () => {
     const sub = join(repo, 'nested', 'dir');
-    await execa('mkdir', ['-p', sub]);
+    await mkdir(sub, { recursive: true });
 
     expect(await resolveRepoRoot(sub)).toBe(repo);
   });

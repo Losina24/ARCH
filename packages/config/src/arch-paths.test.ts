@@ -4,13 +4,15 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getArchPaths } from './arch-paths.js';
 
-// getArchPaths derives every path from os.homedir(), which reads $HOME on POSIX — stub it to a
-// throwaway directory so these tests never touch the real developer machine's ~/.arch.
+// getArchPaths derives every path from os.homedir(), which reads $HOME on POSIX and
+// %USERPROFILE% on Windows — stub both to a throwaway directory so these tests never touch the
+// real developer machine's ~/.arch.
 let homeDir: string;
 
 beforeEach(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'arch-paths-test-home-'));
   process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
 });
 
 afterEach(async () => {
@@ -22,7 +24,11 @@ describe('getArchPaths', () => {
     const paths = getArchPaths('/tmp/my-project');
     expect(paths.archDir.startsWith(join(homeDir, '.arch', 'projects'))).toBe(true);
     expect(paths.archDir.startsWith('/tmp/my-project')).toBe(false);
-    expect(paths.socketPath).toBe(join(paths.archDir, 'daemon.sock'));
+    if (process.platform === 'win32') {
+      expect(paths.socketPath.startsWith('\\\\.\\pipe\\arch-')).toBe(true);
+    } else {
+      expect(paths.socketPath).toBe(join(paths.archDir, 'daemon.sock'));
+    }
     expect(paths.runsDir).toBe(join(paths.archDir, 'runs'));
     expect(paths.configPath).toBe(join(paths.archDir, 'config.json'));
   });

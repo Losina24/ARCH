@@ -18,10 +18,11 @@ describe('planProject', () => {
 
   beforeEach(async () => {
     cwd = await mkdtemp(join(tmpdir(), 'arch-plan-project-test-'));
-    // archDir now lives under ~/.arch (os.homedir() reads $HOME on POSIX) — stub it so this
-    // test never writes to the real developer machine's ~/.arch.
+    // archDir now lives under ~/.arch (os.homedir() reads $HOME on POSIX, %USERPROFILE% on
+    // Windows) — stub both so this test never writes to the real developer machine's ~/.arch.
     homeDir = await mkdtemp(join(tmpdir(), 'arch-plan-project-test-home-'));
     process.env.HOME = homeDir;
+    process.env.USERPROFILE = homeDir;
     run = {
       runId: 'run-1',
       title: 'Add add(a, b)',

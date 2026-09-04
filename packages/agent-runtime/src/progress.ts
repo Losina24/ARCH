@@ -43,7 +43,9 @@ function safeFile(value: unknown, cwd: string): string | undefined {
   if (isAbsolute(clean)) {
     const fromCwd = relative(cwd, clean);
     if (fromCwd && !fromCwd.startsWith('..') && !isAbsolute(fromCwd)) {
-      return fromCwd.slice(0, 120);
+      // `relative()` returns OS-native separators (backslashes on Windows) — normalize so this
+      // repo-relative path always looks the same regardless of the host platform.
+      return fromCwd.replaceAll('\\', '/').slice(0, 120);
     }
     return basename(clean).slice(0, 120) || undefined;
   }
