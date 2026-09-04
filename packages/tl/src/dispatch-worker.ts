@@ -1,7 +1,7 @@
 import { type AgentProgressEvent, runAgentHeadless } from '@losina/agent-runtime';
 import { type WorktreeHandle, getStagedFiles, stageAll } from '@losina/core';
 import type { Task } from '@losina/schemas';
-import { type CorrectionSource, buildWorkerPrompt } from './prompts.js';
+import { type CorrectionSource, type DependencyBrief, buildWorkerPrompt } from './prompts.js';
 
 export interface DispatchWorkerInput {
   task: Task;
@@ -14,6 +14,9 @@ export interface DispatchWorkerInput {
   correctionSource?: CorrectionSource;
   /** A human's note to the worker, injected only on a fresh dispatch (no correctionMarkdown). */
   humanMessage?: string;
+  /** Identity of each task this one depends on, so the Worker treats their already-completed
+   * work as a fixed contract instead of rediscovering (or redefining) it blind. Defaults to []. */
+  dependencies?: DependencyBrief[];
   signal?: AbortSignal;
   onProgress?: (progress: AgentProgressEvent) => void;
   /**
@@ -33,13 +36,15 @@ export interface DispatchWorkerOutput {
 }
 
 export async function dispatchWorker(input: DispatchWorkerInput): Promise<DispatchWorkerOutput> {
-  const prompt = buildWorkerPrompt(
-    input.taskMarkdown,
-    input.correctionMarkdown,
-    input.humanMessage,
-    input.correctionSource,
-    input.task.checks,
-  );
+  const prompt = buildWorkerPrompt({
+    taskId: input.task.id,
+    taskMarkdown: input.taskMarkdown,
+    correctionMarkdown: input.correctionMarkdown,
+    humanMessage: input.humanMessage,
+    correctionSource: input.correctionSource,
+    checks: input.task.checks,
+    dependencies: input.dependencies,
+  });
 
   const { sessionId, output } = await runAgentHeadless({
     prompt,

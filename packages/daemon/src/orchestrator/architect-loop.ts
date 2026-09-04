@@ -82,6 +82,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           model: request.model,
           correctionFilePath: request.correctionFilePath,
           workerSummary: request.workerSummary,
+          dependencyScopes: request.dependencyScopes,
           resumeSessionId: architectSessionId,
           signal,
           onProgress: (progress) =>
