@@ -17,7 +17,11 @@ describe('loadRunSessions / saveRunSessions', () => {
   });
 
   it('returns an empty session map when no file exists yet', async () => {
-    expect(await loadRunSessions(runDir)).toEqual({ taskSessions: {}, grillingSeq: 0 });
+    expect(await loadRunSessions(runDir)).toEqual({
+      taskSessions: {},
+      grillingSeq: 0,
+      consultationSeqs: {},
+    });
   });
 
   it('round-trips a populated session map', async () => {
@@ -25,6 +29,7 @@ describe('loadRunSessions / saveRunSessions', () => {
       architectSessionId: 'session-architect',
       taskSessions: { 'TASK-001': 'session-worker-1' },
       grillingSeq: 0,
+      consultationSeqs: { 'TASK-001': 2 },
     };
     await saveRunSessions(runDir, sessions);
     expect(await loadRunSessions(runDir)).toEqual(sessions);
@@ -42,6 +47,7 @@ describe('loadRunSessions / saveRunSessions', () => {
     expect(await loadRunSessions(runDir)).toEqual({
       taskSessions: { 'TASK-001': 'session-1', 'TASK-002': 'session-2' },
       grillingSeq: 0,
+      consultationSeqs: {},
     });
   });
 });
