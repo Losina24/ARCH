@@ -9,6 +9,11 @@ export class RunManager {
   private readonly runs = new Map<string, RunMeta>();
   private readonly abortControllers = new Map<string, AbortController>();
   private readonly pendingRetries = new Map<string, QueuedRetry[]>();
+  // In-memory only, keyed by runId then taskId — exists purely so a human's retryTask reply can
+  // be broadcast as a properly-seq'd consultation:answered event. Lost on daemon restart, which
+  // is fine: the TUI's own clearing rule for a pending consultation is driven by task status
+  // (see run-detail-view.tsx), not by this event, so nothing depends on it surviving a restart.
+  private readonly pendingConsultations = new Map<string, Map<string, number>>();
 
   list(): RunMeta[] {
     return [...this.runs.values()];
@@ -65,9 +70,25 @@ export class RunManager {
     return queue;
   }
 
+  /** Records that a task's consultation question is pending, so a later reply gets its seq. */
+  setPendingConsultation(runId: string, taskId: string, seq: number): void {
+    const forRun = this.pendingConsultations.get(runId) ?? new Map<string, number>();
+    forRun.set(taskId, seq);
+    this.pendingConsultations.set(runId, forRun);
+  }
+
+  /** Removes and returns the pending consultation's seq for this task, if any. */
+  takePendingConsultation(runId: string, taskId: string): number | undefined {
+    const forRun = this.pendingConsultations.get(runId);
+    const seq = forRun?.get(taskId);
+    forRun?.delete(taskId);
+    return seq;
+  }
+
   unregister(runId: string): void {
     this.runs.delete(runId);
     this.abortControllers.delete(runId);
     this.pendingRetries.delete(runId);
+    this.pendingConsultations.delete(runId);
   }
 }

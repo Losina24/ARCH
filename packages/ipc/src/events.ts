@@ -91,6 +91,50 @@ export interface GrillingAnsweredEvent {
   skipped: boolean;
 }
 
+/** Internal: a task cycle asks the Architect to turn a stuck task into a human-facing question. */
+export interface ConsultationRequestedEvent {
+  type: 'consultation:requested';
+  runId: string;
+  taskId: string;
+  seq: number;
+  requestPath: string;
+}
+
+/** Internal: the Architect's reply to the above — the round-trip a task cycle blocks on. */
+export interface ConsultationCompletedEvent {
+  type: 'consultation:completed';
+  runId: string;
+  taskId: string;
+  seq: number;
+  /** Absent when the Architect wrote no question (protocol miss, crash, or timeout). */
+  question?: string;
+  recommendation?: string;
+}
+
+/**
+ * Human-facing. Emitted only after the task's terminal status (failed/awaiting_human) is already
+ * persisted and its worktree released, so a client reacting to this can immediately retryTask.
+ */
+export interface ConsultationQuestionAskedEvent {
+  type: 'consultation:question-asked';
+  runId: string;
+  taskId: string;
+  seq: number;
+  question: string;
+  recommendation: string;
+  /** Same text as the task's failureReason — why it stopped, in the task cycle's own words. */
+  failureReason: string;
+}
+
+export interface ConsultationAnsweredEvent {
+  type: 'consultation:answered';
+  runId: string;
+  taskId: string;
+  seq: number;
+  answer?: string;
+  skipped: boolean;
+}
+
 export type ArchMeshEvent =
   | RunStatusChangedEvent
   | TaskStatusChangedEvent
@@ -100,7 +144,11 @@ export type ArchMeshEvent =
   | ReviewCompletedEvent
   | HumanPromptSentEvent
   | GrillingQuestionAskedEvent
-  | GrillingAnsweredEvent;
+  | GrillingAnsweredEvent
+  | ConsultationRequestedEvent
+  | ConsultationCompletedEvent
+  | ConsultationQuestionAskedEvent
+  | ConsultationAnsweredEvent;
 
 /** One event as durably persisted to a run's event log, paired with when it was broadcast. */
 export interface PersistedRunEvent {

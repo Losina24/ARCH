@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- When a task exhausts its retries or crashes into `awaiting_human`/`failed`, the Architect is now consulted before the human is: it's shown the task brief, prior corrections, the worker's diff, and exactly why the deterministic rules gave up, and gets one chance to turn that into a short, human-facing question with a concrete recommended answer. This is best-effort and purely additive — a consultation can never change the task's own outcome (it's queued and resolved after the task is already finalized), and if it fails or times out the task still fails/pauses exactly as before, just without a question attached. There's no TUI surface for it yet in this change (that's next); for now the question shows up as an `agent:message` on the Architect's transcript, and a human can act on it via the existing `arch retry-task` — the reply is threaded straight into the Worker's next attempt, unchanged, with no second Architect call in between.
+
 ### Fixed
 - ARCH now runs on native Windows. The daemon's IPC now uses a Windows named pipe instead of a real AF_UNIX socket, which could fail to bind with `EACCES` regardless of directory permissions; the CLI and the daemon it spawns now agree on the current repo's path (`git rev-parse --show-toplevel`'s forward-slash output is normalized to the native separator before being hashed into the daemon's socket/pipe name, and the spawned daemon is handed that resolved `cwd` explicitly instead of re-deriving its own); file paths surfaced in agent progress events are always forward-slash regardless of platform; and the `archctl`/`arch-terminal` build no longer shells out to `chmod`, which doesn't exist on Windows.
 

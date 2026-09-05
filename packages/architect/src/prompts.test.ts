@@ -1,6 +1,11 @@
 import type { RunMeta } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
-import { buildPlanPrompt, buildRefinePlanPrompt, buildReviewPrompt } from './prompts.js';
+import {
+  buildConsultationPrompt,
+  buildPlanPrompt,
+  buildRefinePlanPrompt,
+  buildReviewPrompt,
+} from './prompts.js';
 
 const run: RunMeta = {
   runId: 'run-1',
@@ -122,5 +127,67 @@ describe('buildReviewPrompt', () => {
       workerSummary: '',
     });
     expect(prompt).toContain('(the worker left no explanation)');
+  });
+});
+
+describe('buildConsultationPrompt', () => {
+  const consultationInput = {
+    taskId,
+    taskMarkdown: '# Task brief',
+    correctionMarkdowns: [],
+    gitDiff: 'diff --git a/src/index.js b/src/index.js',
+    workerSummary: 'Implemented add(a, b) in src/index.js.',
+    failureReason: 'Automated checks kept failing after 3 retries.',
+    failureKind: 'checks' as const,
+    retriesSpent: 3,
+    maxRetries: 3,
+    consultationFilePath:
+      '/home/user/.arch/projects/project-abc12345/runs/run-1/tasks/TASK-001.consultation.1.json',
+  };
+
+  it('names the stuck task, the failure classification/budget, and the consultation file path, ending with the CONSULTATION_READY sentinel', () => {
+    const prompt = buildConsultationPrompt(consultationInput);
+
+    expect(prompt).toContain('Stuck task: TASK-001');
+    expect(prompt).toContain('# Task brief');
+    expect(prompt).toContain('Automated checks kept failing after 3 retries.');
+    expect(prompt).toContain('checks, after 3/3 correction attempts');
+    expect(prompt).toContain(consultationInput.consultationFilePath);
+    expect(prompt.trim().endsWith('CONSULTATION_READY')).toBe(true);
+  });
+
+  it('lists prior correction rounds in order when present', () => {
+    const prompt = buildConsultationPrompt({
+      ...consultationInput,
+      correctionMarkdowns: ['fix the edge case', 'also add a docstring'],
+    });
+
+    expect(prompt).toContain('Prior correction rounds');
+    const first = prompt.indexOf('fix the edge case');
+    const second = prompt.indexOf('also add a docstring');
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(second).toBeGreaterThan(first);
+  });
+
+  it('falls back to placeholders when the diff and worker summary are empty', () => {
+    const prompt = buildConsultationPrompt({
+      ...consultationInput,
+      gitDiff: '',
+      workerSummary: '',
+    });
+    expect(prompt).toContain('(no changes were staged)');
+    expect(prompt).toContain('(the worker left no explanation)');
+  });
+
+  it('instructs the Architect that the reply is relayed verbatim, never rewritten', () => {
+    const prompt = buildConsultationPrompt(consultationInput);
+    expect(prompt).toContain('passed VERBATIM to the Worker');
+  });
+
+  it('never mentions the unrelated dispatch markers other prompt kinds key off of', () => {
+    const prompt = buildConsultationPrompt(consultationInput);
+    expect(prompt).not.toContain('GRILLING_DONE');
+    expect(prompt).not.toContain('Definition phase');
+    expect(prompt).not.toContain('semantic review');
   });
 });
