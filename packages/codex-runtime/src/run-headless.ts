@@ -100,8 +100,16 @@ interface ExecaLikeError {
   timedOut?: boolean;
 }
 
+// execa always attaches `stdout` to the error it throws for a failure that actually spawned a
+// process, but a pre-spawn OS-level failure (e.g. ENAMETOOLONG, a prompt too large for the
+// platform's command-line limit) never starts one and so has no `.stdout` at all — it does,
+// however, always carry `command` (execa attaches that to every error it produces, spawned or
+// not). Checking for `stdout` alone (as this used to) misses that case, letting execa's raw,
+// unsanitized message — the entire escaped command line included — leak through unwrapped.
+// Matching on either is what makes this catch both shapes. A plain, unrelated JS error thrown
+// elsewhere has neither.
 function isExecaLikeError(error: unknown): error is ExecaLikeError {
-  return typeof error === 'object' && error !== null && 'stdout' in error;
+  return typeof error === 'object' && error !== null && ('stdout' in error || 'command' in error);
 }
 
 function parseJsonlEvents(stdout: unknown): CodexJsonlEvent[] {
