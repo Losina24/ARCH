@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
 ## [0.2.1]
 
 ### Fixed
+- A task escalated to an Architect consultation more than once (answered, retried, fails again the same way) no longer reuses `seq: 1` for the second consultation too. The seq counter was only ever kept in memory for the current task cycle, so a fresh cycle after a human retry restarted it at zero; since the TUI's auto-switch-to-the-question behavior is keyed on task id + seq to avoid repeatedly yanking the user back to a question they've already dismissed, a second question with a colliding seq silently failed to auto-surface at all. The counter is now persisted per task and read back on every escalation, so each one gets a genuinely new seq.
 - ARCH now runs on native Windows. The daemon's IPC now uses a Windows named pipe instead of a real AF_UNIX socket, which could fail to bind with `EACCES` regardless of directory permissions; the CLI and the daemon it spawns now agree on the current repo's path (`git rev-parse --show-toplevel`'s forward-slash output is normalized to the native separator before being hashed into the daemon's socket/pipe name, and the spawned daemon is handed that resolved `cwd` explicitly instead of re-deriving its own); file paths surfaced in agent progress events are always forward-slash regardless of platform; and the `archctl`/`arch-terminal` build no longer shells out to `chmod`, which doesn't exist on Windows.
 
 ## [0.2.0]
