@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- The fictional "Team Lead" agent. There was never an LLM behind it: `role: 'tl'` activity events reflected the task orchestration loop's own scheduling state, not any agent's reasoning, and its configurable `tlModel` was never actually used to make a model call. The orchestration work it appeared to represent (worktree lifecycle, running automated checks, enforcing task scope, retry budgeting) is unchanged — only the fictional persona and its dead config knob are gone. Worker correction prompts now attribute automated-check and scope-violation feedback to "the automated checks" / "an automated scope check" instead of a nonexistent colleague; the Architect's existing per-task review remains the Worker's actual (and already context-isolated) evaluator.
+
 ### Fixed
 - ARCH now runs on native Windows. The daemon's IPC now uses a Windows named pipe instead of a real AF_UNIX socket, which could fail to bind with `EACCES` regardless of directory permissions; the CLI and the daemon it spawns now agree on the current repo's path (`git rev-parse --show-toplevel`'s forward-slash output is normalized to the native separator before being hashed into the daemon's socket/pipe name, and the spawned daemon is handed that resolved `cwd` explicitly instead of re-deriving its own); file paths surfaced in agent progress events are always forward-slash regardless of platform; and the `archctl`/`arch-terminal` build no longer shells out to `chmod`, which doesn't exist on Windows.
 

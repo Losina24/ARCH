@@ -15,25 +15,22 @@ export interface AgentStatusEntry {
 
 const ROLE_LABEL: Record<AgentRole, string> = {
   architect: 'Architect',
-  tl: 'TL',
   worker: 'Worker',
 };
 
 const ROLE_VERB: Record<AgentRole, string> = {
   architect: 'Reviewing',
-  tl: 'Dispatching',
   worker: 'Working on',
 };
 
 const ROLE_COLOR_T: Record<AgentRole, number> = {
   architect: 0,
-  tl: 0.5,
   worker: 1,
 };
 
-/** Same neon-gradient color per role everywhere an "Agents"/"Models" list shows Architect/TL/Worker. */
+/** Same neon-gradient color per role everywhere an "Agents"/"Models" list shows Architect/Worker. */
 export function agentRoleColor(role: AgentRole): string {
-  return neonGradientColor(ROLE_COLOR_T[role]);
+  return neonGradientColor(ROLE_COLOR_T[role] ?? 1);
 }
 
 // A worker's `idle-waiting` with a taskId is not genuine idleness — it's the pause tl-loop.ts
@@ -137,6 +134,12 @@ function indexEvents(events: ArchMeshEvent[]) {
 
   for (const event of events) {
     if (event.type === 'agent:activity') {
+      // A run started before the fictional "TL" agent role was removed may still have
+      // role:'tl' events in its persisted event log — ignore them rather than showing a
+      // stray, unlabeled row for a role that no longer exists. Cast to string: AgentRole
+      // itself no longer includes 'tl', but old on-disk data isn't bound by today's type.
+      const role: string = event.role;
+      if (role !== 'architect' && role !== 'worker') continue;
       latestByAgent.set(event.agentId, event);
       if (event.role === 'worker') {
         if (event.taskId) taskToAgent.set(event.taskId, event.agentId);
@@ -165,7 +168,7 @@ function indexEvents(events: ArchMeshEvent[]) {
   return { latestByAgent, workerOrder, currentSlotAgent };
 }
 
-/** Maps every worker agentId ever seen to its display label ("Architect", "TL", "Worker 1", …). */
+/** Maps every worker agentId ever seen to its display label ("Architect", "Worker 1", …). */
 export function buildAgentLabels(events: ArchMeshEvent[]): Map<string, string> {
   const { latestByAgent, workerOrder } = indexEvents(events);
   const labels = new Map<string, string>();
@@ -185,7 +188,7 @@ export function buildAgentLabels(events: ArchMeshEvent[]): Map<string, string> {
  * All worker agentIds that have ever occupied the same numbered slot as `agentId` (including
  * itself), in first-appearance order — so viewing "Worker N"'s transcript can show the full
  * history of every task that slot has ever been assigned, not just its current occupant.
- * Non-worker agentIds (architect/tl, which never share a slot) just return `[agentId]`.
+ * Non-worker agentIds (the Architect, which never shares a slot) just return `[agentId]`.
  */
 export function workerSlotGroup(events: ArchMeshEvent[], agentId: string): string[] {
   const { workerOrder } = indexEvents(events);
@@ -200,7 +203,7 @@ export function workerSlotGroup(events: ArchMeshEvent[], agentId: string): strin
 }
 
 /**
- * One status entry per currently-occupied slot: Architect and TL always shown, then one per
+ * One status entry per currently-occupied slot: the Architect always shown, then one per
  * live worker slot (bounded by real concurrency, not by how many tasks have run so far).
  */
 export function deriveAgentStatuses(events: ArchMeshEvent[]): AgentStatusEntry[] {
@@ -208,7 +211,6 @@ export function deriveAgentStatuses(events: ArchMeshEvent[]): AgentStatusEntry[]
   const eventsByRole = [...latestByAgent.values()];
 
   const architectEvent = eventsByRole.find((event) => event.role === 'architect');
-  const tlEvent = eventsByRole.find((event) => event.role === 'tl');
 
   const entries: AgentStatusEntry[] = [
     {
@@ -217,13 +219,6 @@ export function deriveAgentStatuses(events: ArchMeshEvent[]): AgentStatusEntry[]
       label: ROLE_LABEL.architect,
       statusText: statusTextFor(architectEvent, 'architect'),
       category: categoryFor(architectEvent),
-    },
-    {
-      agentId: tlEvent?.agentId ?? 'tl',
-      role: 'tl',
-      label: ROLE_LABEL.tl,
-      statusText: statusTextFor(tlEvent, 'tl'),
-      category: categoryFor(tlEvent),
     },
   ];
 

@@ -2,27 +2,26 @@ import type { CheckDefinition } from '@losina/schemas';
 
 /**
  * Who's actually behind a correction round, so the Worker prompt attributes it accurately:
- * - 'checks': the Team Lead ran this task's automated checks and they failed.
- * - 'scope': the Team Lead detected changes outside the task's declared scope.
+ * - 'checks': ARCH ran this task's automated checks and they failed.
+ * - 'scope': an automated scope check detected changes outside the task's declared scope.
  * - 'review': the Architect performed the semantic review and requested changes.
  */
 export type CorrectionSource = 'checks' | 'scope' | 'review';
 
 const CORRECTION_INTRO: Record<CorrectionSource, string> = {
   checks:
-    "The Team Lead ran this task's automated checks against your previous implementation and they failed.",
+    "This task's automated checks were run against your previous implementation and they failed.",
   scope:
-    "The Team Lead detected file changes outside this task's declared scope in your previous implementation.",
+    "An automated scope check found file changes outside this task's declared scope in your previous implementation.",
   review: 'The Architect reviewed your previous implementation of this task and requested changes.',
 };
 
 /**
- * Surfaces the exact commands the Team Lead will run to validate this task — including the
- * exact package/path each one targets — so the Worker can run them itself before finishing
- * instead of only self-verifying against a package/path it assumed. Without this, a check
- * that targets the wrong package for this repo's actual layout only surfaces after the Team
- * Lead runs it post-hoc, and the Worker has no way to tell that failure apart from a real
- * defect in its own code.
+ * Surfaces the exact commands ARCH will run to validate this task — including the exact
+ * package/path each one targets — so the Worker can run them itself before finishing instead
+ * of only self-verifying against a package/path it assumed. Without this, a check that targets
+ * the wrong package for this repo's actual layout only surfaces after they are run post-hoc,
+ * and the Worker has no way to tell that failure apart from a real defect in its own code.
  */
 function formatChecksBlock(checks: CheckDefinition[]): string {
   if (checks.length === 0) return '';
