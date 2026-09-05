@@ -35,7 +35,6 @@ async function type(stdin: Stdin, text: string): Promise<void> {
 const config: AgentMeshConfig = {
   models: {
     architectModel: 'claude-opus-5',
-    tlModel: 'claude-sonnet-5',
     workerModel: 'claude-sonnet-5',
   },
   execution: {
@@ -103,7 +102,6 @@ describe('SettingsModal', () => {
     expect(frame).not.toContain('╭');
     expect(frame).not.toContain('│');
     expect(frame).toContain('Architect model');
-    expect(frame).toContain('TL model');
     expect(frame).toContain('Worker model');
     expect(frame).toContain('Max retries');
   });
@@ -171,7 +169,6 @@ describe('SettingsModal', () => {
     await press(stdin, '\x1b[B');
     await press(stdin, '\x1b[B');
     await press(stdin, '\x1b[B');
-    await press(stdin, '\x1b[B');
     await press(stdin, '\r');
     await type(stdin, '9');
     await press(stdin, '\r');
@@ -184,7 +181,6 @@ describe('SettingsModal', () => {
     const { lastFrame, stdin } = renderModal(client);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
-    await press(stdin, '\x1b[B');
     await press(stdin, '\x1b[B');
     await press(stdin, '\x1b[B');
     await press(stdin, '\x1b[B');
@@ -212,7 +208,6 @@ describe('SettingsModal', () => {
     expect(client.setConfig).toHaveBeenCalledWith({
       models: {
         architectModel: 'claude-opus-5',
-        tlModel: 'claude-sonnet-5',
         workerModel: 'claude-sonnet-5',
       },
       maxConcurrency: 4,

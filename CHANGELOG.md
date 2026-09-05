@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- The fictional "Team Lead" agent. There was never an LLM behind it: `role: 'tl'` activity events reflected the task orchestration loop's own scheduling state, not any agent's reasoning, and its configurable `tlModel` was never actually used to make a model call. The orchestration work it appeared to represent (worktree lifecycle, running automated checks, enforcing task scope, retry budgeting) is unchanged — only the fictional persona and its dead config knob are gone. Worker correction prompts now attribute automated-check and scope-violation feedback to "the automated checks" / "an automated scope check" instead of a nonexistent colleague; the Architect's existing per-task review remains the Worker's actual (and already context-isolated) evaluator.
+
 ### Added
 - Contract-first task sequencing: the Architect now explicitly identifies shared surface (types, interfaces, schemas, API/DTO shapes, DB migrations, config keys, event/protocol definitions) that several tasks would otherwise invent independently, gives it its own early no-dependency task, and makes every consumer `dependsOn` it — this guidance now also survives a `refine` round, which previously dropped all decomposition guidelines entirely. A dependent task's Worker prompt now names each dependency's id, title, and declared scope (falling back to a short excerpt when a dependency declared no scope) instead of being left to discover — or redefine — a contract blind, and the Architect's semantic review is now told which paths are owned by a task's dependencies so it can flag an out-of-scope edit as a defect. A dependency's committed-but-unmerged work (the case where the run's base branch is `develop`) is now merged into a dependent task's fresh worktree, so the contract is guaranteed to be physically present regardless of whether the base branch allowed the dependency to auto-merge.
 

@@ -21,11 +21,25 @@ function event(overrides: Partial<AgentActivityEvent>): AgentActivityEvent {
 }
 
 describe('deriveAgentStatuses', () => {
-  it('always shows the Architect and TL, even with no events at all', () => {
+  it('always shows the Architect, even with no events at all', () => {
     const entries = deriveAgentStatuses([]);
-    expect(entries.map((entry) => entry.label)).toEqual(['Architect', 'TL']);
+    expect(entries.map((entry) => entry.label)).toEqual(['Architect']);
     expect(entries[0].statusText).toBe('Waiting');
     expect(entries[0].category).toBe('idle');
+  });
+
+  it("ignores a legacy role:'tl' event from a run persisted before the TL agent role was removed", () => {
+    const legacyTlEvent = {
+      type: 'agent:activity',
+      runId: 'run-1',
+      agentId: 'tl-run-1',
+      role: 'tl',
+      state: 'thinking',
+    } as unknown as AgentActivityEvent;
+
+    const entries = deriveAgentStatuses([legacyTlEvent]);
+    expect(entries.map((entry) => entry.label)).toEqual(['Architect']);
+    expect(agentRoleColor('architect')).toBe(neonGradientColor(0));
   });
 
   it('numbers distinct workers in first-appearance order', () => {
@@ -72,12 +86,12 @@ describe('deriveAgentStatuses', () => {
     expect(worker?.statusText).toBe('Needs your help · TASK-001');
   });
 
-  it("keeps the TL's genuine idle-waiting (no taskId) categorized as idle", () => {
-    const tl = deriveAgentStatuses([
-      event({ agentId: 'tl-run-1', role: 'tl', state: 'idle-waiting' }),
-    ]).find((entry) => entry.role === 'tl');
-    expect(tl?.category).toBe('idle');
-    expect(tl?.statusText).toBe('Waiting');
+  it("keeps a non-worker role's genuine idle-waiting (no taskId) categorized as idle", () => {
+    const architect = deriveAgentStatuses([
+      event({ agentId: 'architect-1', role: 'architect', state: 'idle-waiting' }),
+    ]).find((entry) => entry.role === 'architect');
+    expect(architect?.category).toBe('idle');
+    expect(architect?.statusText).toBe('Waiting');
   });
 
   it('shows the assigned task id while thinking or using a tool on it', () => {
@@ -248,17 +262,14 @@ describe('workerSlotGroup', () => {
 });
 
 describe('agentRoleColor', () => {
-  it('places architect, tl, and worker at t=0, t=0.5, and t=1 of the neon gradient', () => {
+  it('places architect and worker at t=0 and t=1 of the neon gradient', () => {
     expect(agentRoleColor('architect')).toBe(neonGradientColor(0));
-    expect(agentRoleColor('tl')).toBe(neonGradientColor(0.5));
     expect(agentRoleColor('worker')).toBe(neonGradientColor(1));
   });
 
   it('gives every role a distinct color, matching the Overview models list scheme', () => {
-    const colors = new Set(
-      (['architect', 'tl', 'worker'] as const).map((role) => agentRoleColor(role)),
-    );
-    expect(colors.size).toBe(3);
+    const colors = new Set((['architect', 'worker'] as const).map((role) => agentRoleColor(role)));
+    expect(colors.size).toBe(2);
   });
 });
 

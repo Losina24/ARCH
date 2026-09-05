@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 export const ModelConfigSchema = z.object({
   architectModel: z.string(),
-  tlModel: z.string(),
   workerModel: z.string(),
   perTaskOverrides: z.record(z.string(), z.string()).optional(),
 });
