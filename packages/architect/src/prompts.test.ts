@@ -51,6 +51,19 @@ describe('buildPlanPrompt', () => {
     expect(prompt).toContain('/workspace/service-a');
     expect(prompt).toContain('/workspace/service-b');
   });
+
+  it('instructs the architect to sequence a shared contract task before its consumers', () => {
+    const prompt = buildPlanPrompt(planInput);
+    expect(prompt).toContain('shared surface');
+    expect(prompt).toContain('"dependsOn: []"');
+    expect(prompt).toContain('does not own it');
+  });
+
+  it('still gives the existing dependsOn/scope decomposition guidance', () => {
+    const prompt = buildPlanPrompt(planInput);
+    expect(prompt).toContain('Every "id" must be unique');
+    expect(prompt).toContain('Keep scopes disjoint between tasks');
+  });
 });
 
 describe('buildRefinePlanPrompt', () => {
@@ -64,6 +77,18 @@ describe('buildRefinePlanPrompt', () => {
     const prompt = buildRefinePlanPrompt({ ...planInput, feedback: 'feedback' });
     expect(prompt).toContain('Keep the ids of tasks that are still valid');
     expect(prompt).toContain('unchanged (so any existing references keep working)');
+  });
+
+  // Regression guard: buildRefinePlanPrompt used to dump the tasks-index schema without any of
+  // the decomposition guidelines that come with it in buildPlanPrompt, silently losing this
+  // guidance (including contract-first sequencing) the moment a plan got refined.
+  it('still carries the contract-first and dependsOn/scope decomposition guidance', () => {
+    const prompt = buildRefinePlanPrompt({ ...planInput, feedback: 'feedback' });
+    expect(prompt).toContain('shared surface');
+    expect(prompt).toContain('"dependsOn: []"');
+    expect(prompt).toContain('does not own it');
+    expect(prompt).toContain('Every "id" must be unique');
+    expect(prompt).toContain('Keep scopes disjoint between tasks');
   });
 });
 
@@ -127,6 +152,33 @@ describe('buildReviewPrompt', () => {
       workerSummary: '',
     });
     expect(prompt).toContain('(the worker left no explanation)');
+  });
+
+  it('says nothing about dependency scopes when there are none', () => {
+    const prompt = buildReviewPrompt({
+      taskId,
+      taskMarkdown: '# Task brief',
+      correctionMarkdowns: [],
+      gitDiff: 'diff',
+      correctionFilePath: '/tmp/project/correction.md',
+      workerSummary: 'done',
+    });
+    expect(prompt).not.toContain('own these paths');
+  });
+
+  it('warns the reviewer when the diff might touch a dependency-owned path', () => {
+    const prompt = buildReviewPrompt({
+      taskId,
+      taskMarkdown: '# Task brief',
+      correctionMarkdowns: [],
+      gitDiff: 'diff',
+      correctionFilePath: '/tmp/project/correction.md',
+      workerSummary: 'done',
+      dependencyScopes: ['src/job.ts'],
+    });
+    expect(prompt).toContain('own these paths');
+    expect(prompt).toContain('src/job.ts');
+    expect(prompt).toContain('that is a defect — request a correction');
   });
 });
 

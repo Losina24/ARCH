@@ -11,7 +11,6 @@ interface CwdOption {
 
 interface ConfigSetOptions extends CwdOption {
   architectModel?: string;
-  tlModel?: string;
   workerModel?: string;
   maxConcurrency?: string;
   maxRetries?: string;
@@ -141,9 +140,8 @@ config
 
 config
   .command('set')
-  .description('Update the architect, TL, and/or worker model configuration')
+  .description('Update the architect and/or worker model configuration')
   .option('--architect-model <model>', 'model used by the Architect agent')
-  .option('--tl-model <model>', 'model used by the TL agent')
   .option('--worker-model <model>', 'model used by Worker agents')
   .option('--max-concurrency <n>', 'maximum concurrent workers')
   .option('--max-retries <n>', 'maximum correction retries per task')
@@ -153,7 +151,6 @@ config
       client.setConfig({
         models: {
           ...(options.architectModel && { architectModel: options.architectModel }),
-          ...(options.tlModel && { tlModel: options.tlModel }),
           ...(options.workerModel && { workerModel: options.workerModel }),
         },
         ...(options.maxConcurrency && { maxConcurrency: Number(options.maxConcurrency) }),

@@ -19,7 +19,6 @@ const BOOLEAN_OPTIONS = ['true', 'false'] as const;
 
 const FIELDS = [
   { key: 'architectModel', label: 'Architect model', kind: 'model' },
-  { key: 'tlModel', label: 'TL model', kind: 'model' },
   { key: 'workerModel', label: 'Worker model', kind: 'model' },
   { key: 'maxConcurrency', label: 'Max concurrency', kind: 'text' },
   { key: 'maxRetries', label: 'Max retries', kind: 'text' },
@@ -62,7 +61,6 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [values, setValues] = useState<Record<FieldKey, string>>({
     architectModel: '',
-    tlModel: '',
     workerModel: '',
     maxConcurrency: '',
     maxRetries: '',
@@ -79,7 +77,6 @@ export function SettingsModal({
     client.getConfig().then((config) => {
       setValues({
         architectModel: config.models.architectModel,
-        tlModel: config.models.tlModel,
         workerModel: config.models.workerModel,
         maxConcurrency: String(config.execution.maxConcurrency),
         maxRetries: String(config.execution.maxRetries),
@@ -93,7 +90,6 @@ export function SettingsModal({
     const updated = await client.setConfig({
       models: {
         architectModel: values.architectModel,
-        tlModel: values.tlModel,
         workerModel: values.workerModel,
       },
       maxConcurrency: Number(values.maxConcurrency),
@@ -102,7 +98,6 @@ export function SettingsModal({
     });
     setValues({
       architectModel: updated.models.architectModel,
-      tlModel: updated.models.tlModel,
       workerModel: updated.models.workerModel,
       maxConcurrency: String(updated.execution.maxConcurrency),
       maxRetries: String(updated.execution.maxRetries),
