@@ -5,7 +5,6 @@ describe('ModelConfigSchema', () => {
   it('parses without perTaskOverrides', () => {
     const model = ModelConfigSchema.parse({
       architectModel: 'claude-opus-5',
-      tlModel: 'claude-sonnet-5',
       workerModel: 'claude-sonnet-5',
     });
     expect(model.perTaskOverrides).toBeUndefined();
@@ -14,11 +13,20 @@ describe('ModelConfigSchema', () => {
   it('parses with perTaskOverrides', () => {
     const model = ModelConfigSchema.parse({
       architectModel: 'claude-opus-5',
-      tlModel: 'claude-sonnet-5',
       workerModel: 'claude-sonnet-5',
       perTaskOverrides: { 'TASK-001': 'claude-fable-5' },
     });
     expect(model.perTaskOverrides).toEqual({ 'TASK-001': 'claude-fable-5' });
+  });
+
+  it('silently drops a legacy tlModel field from a config written before the TL role existed', () => {
+    const model = ModelConfigSchema.parse({
+      architectModel: 'claude-opus-5',
+      tlModel: 'claude-sonnet-5',
+      workerModel: 'claude-sonnet-5',
+    });
+    expect(model).not.toHaveProperty('tlModel');
+    expect(model).toEqual({ architectModel: 'claude-opus-5', workerModel: 'claude-sonnet-5' });
   });
 });
 
@@ -39,7 +47,6 @@ describe('AgentMeshConfigSchema', () => {
     const config = AgentMeshConfigSchema.parse({
       models: {
         architectModel: 'claude-opus-5',
-        tlModel: 'claude-sonnet-5',
         workerModel: 'claude-sonnet-5',
       },
       execution: { maxConcurrency: 4, maxRetries: 3 },

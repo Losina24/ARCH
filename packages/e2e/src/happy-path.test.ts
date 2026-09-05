@@ -102,7 +102,7 @@ describe('happy path', () => {
     runtime?.queuePlan({
       projectMarkdown: '# Brief\n\nAdd two files, then a third that depends on both.',
       tasks: [
-        { id: 'TASK-A', title: 'Write file A' },
+        { id: 'TASK-A', title: 'Write file A', scope: ['TASK-A.txt'] },
         { id: 'TASK-B', title: 'Write file B' },
         { id: 'TASK-C', title: 'Write file C', dependsOn: ['TASK-A', 'TASK-B'] },
       ],
@@ -136,5 +136,19 @@ describe('happy path', () => {
       });
       await expect(readFile(join(repo.cwd, `${id}.txt`), 'utf-8')).resolves.toBe(`${id}\n`);
     }
+
+    // TASK-C depends on both TASK-A and TASK-B — its Worker prompt must actually name them as a
+    // fixed contract to build on, not leave it to discover them (or worse, redefine them) blind.
+    const workerPrompt = runtime?.lastWorkerPrompt('TASK-C');
+    expect(workerPrompt).toContain('TASK-A');
+    expect(workerPrompt).toContain('Write file A');
+    expect(workerPrompt).toContain('TASK-A.txt');
+    expect(workerPrompt).toContain('TASK-B');
+    expect(workerPrompt).toContain('Write file B');
+
+    // Its review must also warn the Architect that TASK-A.txt is owned by a dependency, not by
+    // TASK-C itself — confirms dependencyScopes threads all the way through the review request.
+    const reviewPrompt = runtime?.lastReviewPrompt('TASK-C');
+    expect(reviewPrompt).toContain('TASK-A.txt');
   });
 });

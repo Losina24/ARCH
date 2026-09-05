@@ -188,6 +188,33 @@ describe('runCodexHeadless', () => {
     });
   });
 
+  // Regression test: a spawn-time OS failure (ENAMETOOLONG, and plausibly ENOENT/E2BIG) happens
+  // before any process starts, so execa's error for it may carry no `.stdout` at all — unlike
+  // every other failure case, which all originate from a process that did start. Without
+  // matching on `command` too, such an error used to fall through every classifier and execa's
+  // raw, unsanitized `.message` (the full command line included) got thrown as-is. With no
+  // thread ever started, this lands on the existing "no turn ever started" CodexApiRejectionError
+  // path rather than CodexCliExecutionError — a different class, but built the same short,
+  // sanitized way, so the property that actually matters (never leaks the command) still holds.
+  it('sanitizes a spawn-time failure with no stdout instead of leaking the raw command', async () => {
+    const spawnError = Object.assign(
+      new Error('Command failed with ENAMETOOLONG: codex exec ...'),
+      {
+        code: 'ENAMETOOLONG',
+        command: 'codex exec ...',
+        exitCode: undefined,
+      },
+    );
+    mockedExeca.mockRejectedValue(spawnError);
+
+    const promise = runCodexHeadless({ prompt: 'p', model: 'codex', cwd: '/tmp' });
+    await expect(promise).rejects.toBeInstanceOf(CodexApiRejectionError);
+    await promise.catch((error: Error) => {
+      expect(error.message).not.toContain('codex exec');
+      expect(error.message.length).toBeLessThan(200);
+    });
+  });
+
   it('throws a short CodexTimeoutError when the hard subprocess timeout fires', async () => {
     const secretPrompt = 'do not expose this prompt';
     const execaError = Object.assign(new Error(`Command timed out: codex exec ${secretPrompt}`), {

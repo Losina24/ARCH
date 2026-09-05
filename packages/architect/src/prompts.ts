@@ -21,6 +21,17 @@ const TASKS_INDEX_SCHEMA = `tasks:
                               # independent tasks so they can run in parallel safely
       - apps/some-app/src/feature/`;
 
+// Shared between buildPlanPrompt and buildRefinePlanPrompt so a refine round never drops this
+// guidance — it previously only appeared in the initial Definition-phase prompt.
+const DECOMPOSITION_GUIDELINES = `   Guidelines for decomposing tasks:
+   - Prefer several small, independently implementable tasks over one large task but DO NOT abuse of small, every task should have a reasonable amount of content. Example: Do NOT create a specific task for changing a CHANGELOG file.
+   - A good task could be one that is limited to a specific module but implements the complete solution within that module. A small project could have 2 or 3, even 4 tasks, a medium-sized project could have 6-7 tasks, and a large project could have more than 10 tasks (these figures are for reference only).
+   - Before decomposing, identify any shared surface — types, interfaces, schemas, API/DTO shapes, DB migrations, config keys, event/protocol definitions — that more than one task would otherwise have to invent independently. When one exists, give it its own early task with "dependsOn: []" whose entire job is to land exactly that (plus whatever minimal stub its own checks need), and make every task that needs it "dependsOn" it. One contract task per shared surface, not a catch-all "foundations" task — and don't create one for a surface only a single task touches. This is the main lever for real parallelism: a well-placed contract task lets everything downstream of it run concurrently instead of guessing at a shape it doesn't own yet.
+   - Use "dependsOn" for genuine ordering constraints (the contract case above is the canonical one). Tasks with no constraint between them should be able to run in parallel.
+   - Every "id" must be unique and every "dependsOn" entry must reference an id that exists.
+   - For "checks", inspect the repo (package.json scripts, Makefiles, existing CI config) and use real, runnable commands scoped to the affected package/app (build/lint/test/typecheck). Use an empty list only if truly nothing applies.
+   - For "scope", list the directories/files this task will modify. Keep scopes disjoint between tasks that have no "dependsOn" relationship, so they can be safely worked on in parallel. A contract task's "scope" must be exactly the files holding that contract — a task that depends on it must never list those same paths in its own "scope": it imports and conforms to the contract, it does not own it.`;
+
 interface PlanPromptInput {
   run: RunMeta;
   projectMarkdownPath: string;
@@ -58,15 +69,9 @@ Produce exactly these deliverables:
 
 ${TASKS_INDEX_SCHEMA}
 
-   Guidelines for decomposing tasks:
-   - Prefer several small, independently implementable tasks over one large task but DO NOT abuse of small, every task should have a reasonable amount of content. Example: Do NOT create a specific task for changing a CHANGELOG file. 
-   - A good task could be one that is limited to a specific module but implements the complete solution within that module. A small project could have 2 or 3, even 4 tasks, a medium-sized project could have 6-7 tasks, and a large project could have more than 10 tasks (these figures are for reference only).
-   - Use "dependsOn" only for genuine ordering constraints (e.g. shared types/schema before their consumers). Tasks with no constraint between them should be able to run in parallel.
-   - Every "id" must be unique and every "dependsOn" entry must reference an id that exists.
-   - For "checks", inspect the repo (package.json scripts, Makefiles, existing CI config) and use real, runnable commands scoped to the affected package/app (build/lint/test/typecheck). Use an empty list only if truly nothing applies.
-   - For "scope", list the directories/files this task will modify. Keep scopes disjoint between tasks that have no "dependsOn" relationship, so they can be safely worked on in parallel.
+${DECOMPOSITION_GUIDELINES}
 
-3. One Markdown file per task at "${tasksDirPath}/<id>.md" (the path referenced by "file"), containing: a complete context section, an explicit Definition of Done checklist, and any implementation notes or constraints. This file is the only brief the worker that implements the task will receive, so it must be self-contained. It is VERY IMPORTANT that this file has a good explanation. It is not necessary to include every line of code, but you must provide enough explanation so that two different workers could implement practically the same solution.
+3. One Markdown file per task at "${tasksDirPath}/<id>.md" (the path referenced by "file"), containing: a complete context section, an explicit Definition of Done checklist, and any implementation notes or constraints. This file is the only brief the worker that implements the task will receive, so it must be self-contained. It is VERY IMPORTANT that this file has a good explanation. It is not necessary to include every line of code, but you must provide enough explanation so that two different workers could implement practically the same solution. When this task depends on a contract task, name that task and the exact files it owns, and state explicitly that this task imports and conforms to that contract rather than redefining or editing it.
 
 End your final message with exactly one line: PLAN_READY`;
 }
@@ -87,6 +92,8 @@ ${feedback}
 Revise "${projectMarkdownPath}", "${tasksIndexPath}" and the task files under "${tasksDirPath}/" in place to address this feedback. Keep the ids of tasks that are still valid unchanged (so any existing references keep working); add, remove or rewrite tasks as needed. The tasks-index file must keep matching this schema:
 
 ${TASKS_INDEX_SCHEMA}
+
+${DECOMPOSITION_GUIDELINES}
 
 End your final message with exactly one line: PLAN_READY`;
 }
@@ -137,16 +144,37 @@ interface ReviewPromptInput {
   gitDiff: string;
   correctionFilePath: string;
   workerSummary: string;
+  /** Flattened `scope` of every task this one depends on. When non-empty, the review is asked
+   * to flag the diff touching any of these paths as a defect unless the task brief explicitly
+   * required it — the contract's owner, not this task, is meant to change them. */
+  dependencyScopes?: string[];
+}
+
+function formatDependencyScopesWarning(dependencyScopes: string[]): string {
+  if (dependencyScopes.length === 0) return '';
+  return `\n\nThis task depends on other tasks, which own these paths:\n${dependencyScopes
+    .map((path) => `- ${path}`)
+    .join(
+      '\n',
+    )}\nIf the diff above modifies any of them without the task brief explicitly requiring it, that is a defect — request a correction.`;
 }
 
 export function buildReviewPrompt(input: ReviewPromptInput): string {
-  const { taskId, taskMarkdown, correctionMarkdowns, gitDiff, correctionFilePath, workerSummary } =
-    input;
+  const {
+    taskId,
+    taskMarkdown,
+    correctionMarkdowns,
+    gitDiff,
+    correctionFilePath,
+    workerSummary,
+    dependencyScopes = [],
+  } = input;
   const priorCorrections = correctionMarkdowns.length
     ? `\n\nPrior correction rounds already sent to the worker for this task:\n${correctionMarkdowns
         .map((markdown, index) => `--- correction round ${index + 1} ---\n${markdown}`)
         .join('\n\n')}`
     : '';
+  const dependencyScopesWarning = formatDependencyScopesWarning(dependencyScopes);
 
   return `You are the ARCHITECT agent of ARCH. A worker just finished implementing task "${taskId}" and it already passed the automated build/lint/test checks. Your job now is the semantic review (does the change actually satisfy the Definition of Done, is it well-integrated with the rest of the codebase, is it complete). You must NOT edit any source file yourself.
 
@@ -164,7 +192,7 @@ ${workerSummary || '(the worker left no explanation)'}
 Full diff of the worker's changes for this task:
 """
 ${gitDiff || '(no changes were staged)'}
-"""
+"""${dependencyScopesWarning}
 
 Decide:
 - If the change satisfies the Definition of Done: do not write any file, and end your final message with exactly one line: APPROVED

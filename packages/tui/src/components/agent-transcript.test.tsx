@@ -355,8 +355,8 @@ describe('AgentTranscript', () => {
       {
         type: 'agent:activity',
         runId,
-        agentId: 'tl-run-1',
-        role: 'tl',
+        agentId: 'architect-run-1',
+        role: 'architect',
         state: 'thinking',
       },
     ];
