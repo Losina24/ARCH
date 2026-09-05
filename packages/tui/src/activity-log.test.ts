@@ -188,6 +188,65 @@ describe('buildActivityLog', () => {
     ]);
   });
 
+  it('ignores the internal consultation request/response round-trip entirely', () => {
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'consultation:requested',
+        runId,
+        taskId: 'TASK-1',
+        seq: 1,
+        requestPath: '/tmp/consultation-req.yaml',
+      },
+      {
+        type: 'consultation:completed',
+        runId,
+        taskId: 'TASK-1',
+        seq: 1,
+        question: 'Root or dist?',
+        recommendation: 'Root.',
+      },
+    ];
+
+    expect(buildActivityLog(events)).toEqual([]);
+  });
+
+  it('reports a human-facing consultation question', () => {
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'consultation:question-asked',
+        runId,
+        taskId: 'TASK-1',
+        seq: 1,
+        question: 'Root or dist?',
+        recommendation: 'Root.',
+        failureReason: 'Automated checks kept failing.',
+      },
+    ];
+
+    expect(buildActivityLog(events)).toEqual([
+      { id: '0', text: 'Architect needs your input on TASK-1', tone: 'waiting' },
+    ]);
+  });
+
+  it('reports a consultation reply or dismissal', () => {
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'consultation:answered',
+        runId,
+        taskId: 'TASK-1',
+        seq: 1,
+        answer: 'Use root.',
+        skipped: false,
+      },
+      { type: 'consultation:answered', runId, taskId: 'TASK-2', seq: 1, skipped: true },
+    ];
+
+    expect(buildActivityLog(events)).toEqual([
+      { id: '0', text: 'Replied to the Architect about TASK-1', tone: 'info' },
+      { id: '1', text: "Dismissed the Architect's question on TASK-2", tone: 'info' },
+    ]);
+  });
+
   it('maps run status changes to a phase entry', () => {
     const events: ArchMeshEvent[] = [
       { type: 'run:status-changed', runId, phase: 'implementation' },

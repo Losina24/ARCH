@@ -132,6 +132,34 @@ export function buildActivityLog(
       return;
     }
 
+    if (event.type === 'consultation:requested' || event.type === 'consultation:completed') {
+      // Internal round-trip between the task cycle and the Architect loop — nothing a human
+      // needs to see a log line for; consultation:question-asked below is the human-facing one.
+      return;
+    }
+
+    if (event.type === 'consultation:question-asked') {
+      entries.push({
+        id,
+        text: withTime(`Architect needs your input on ${event.taskId}`),
+        tone: 'waiting',
+      });
+      return;
+    }
+
+    if (event.type === 'consultation:answered') {
+      entries.push({
+        id,
+        text: withTime(
+          event.skipped
+            ? `Dismissed the Architect's question on ${event.taskId}`
+            : `Replied to the Architect about ${event.taskId}`,
+        ),
+        tone: 'info',
+      });
+      return;
+    }
+
     entries.push({ id, text: withTime(`Run moved to ${event.phase}`), tone: 'info' });
   });
 

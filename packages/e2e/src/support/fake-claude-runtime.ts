@@ -26,6 +26,7 @@ export type WorkerHandler = (
   options: RunHeadlessOptions,
   // biome-ignore lint/suspicious/noConfusingVoidType: sync/async handlers may legitimately return nothing
 ) => Promise<string | undefined> | void | string;
+
 export type ReviewVerdictSpec =
   | 'approve'
   | { correctionMarkdown: string }
@@ -33,12 +34,17 @@ export type ReviewVerdictSpec =
    * producing a verdict — reproduces how a real `reviewTask` failure reaches `architect-loop.ts`'s
    * catch block, for tests that assert on how that failure is reported. */
   | { crash: string };
+export type ConsultationVerdictSpec =
+  | { question: string; recommendation: string }
 
 // Paths embedded in real prompts come from `path.join`, so on Windows they're
 // backslash-separated (e.g. "...\runs\<id>\project.md") rather than the POSIX form.
 const RUN_ID_PATTERN = /[/\\]runs[/\\]([^/\\]+)[/\\]/;
 const REVIEW_TASK_ID_PATTERN = /implementing task\s+"([^"]+)"/;
 const CORRECTION_FILE_PATTERN = /exactly this path: "([^"]+)"/;
+const CONSULTATION_TASK_ID_PATTERN = /Stuck task: (\S+)/;
+const CONSULTATION_FILE_PATTERN = /Write your question to exactly this path: "([^"]+)"/;
+
 // Matches buildWorkerPrompt's own self-identification line — tried before the cwd/prompt-scan
 // fallback in resolveWorkerTaskId. Deliberately distinct wording from REVIEW_TASK_ID_PATTERN so
 // the two never collide.
@@ -81,6 +87,9 @@ export class FakeClaudeRuntime {
   private readonly reviewQueues = new Map<string, ReviewVerdictSpec[]>();
   private readonly workerCalls = new Map<string, number>();
   private readonly reviewPrompts = new Map<string, string>();
+  private readonly consultationQueues = new Map<string, ConsultationVerdictSpec[]>();
+  private readonly consultationCalls = new Map<string, number>();
+  private readonly consultationPrompts = new Map<string, string>();
   private readonly workerPrompts = new Map<string, string>();
 
   queuePlan(spec: PlanSpec): void {
@@ -111,6 +120,20 @@ export class FakeClaudeRuntime {
     return this.workerCalls.get(taskId) ?? 0;
   }
 
+  queueConsultation(taskId: string, spec: ConsultationVerdictSpec): void {
+    const queue = this.consultationQueues.get(taskId) ?? [];
+    queue.push(spec);
+    this.consultationQueues.set(taskId, queue);
+  }
+
+  consultationCallCount(taskId: string): number {
+    return this.consultationCalls.get(taskId) ?? 0;
+  }
+
+  lastConsultationPrompt(taskId: string): string | undefined {
+    return this.consultationPrompts.get(taskId);
+  }
+
   async handle(options: RunHeadlessOptions): Promise<RunHeadlessResult> {
     const sessionId = randomUUID();
 
@@ -126,6 +149,11 @@ export class FakeClaudeRuntime {
 
     if (options.prompt.includes('semantic review')) {
       const output = await this.writeReview(options);
+      return { sessionId, output };
+    }
+
+    if (options.prompt.includes('CONSULTATION_READY')) {
+      const output = await this.writeConsultation(options);
       return { sessionId, output };
     }
 
@@ -204,5 +232,36 @@ export class FakeClaudeRuntime {
     const correctionFilePath = extractCorrectionFilePath(options.prompt);
     await writeFile(correctionFilePath, verdict.correctionMarkdown, 'utf-8');
     return 'NEEDS_CORRECTION';
+  }
+
+  private async writeConsultation(options: RunHeadlessOptions): Promise<string> {
+    const match = CONSULTATION_TASK_ID_PATTERN.exec(options.prompt);
+    if (!match) {
+      throw new Error(
+        `FakeClaudeRuntime: could not find a task id in consultation prompt:\n${options.prompt}`,
+      );
+    }
+    const taskId = match[1];
+    this.consultationPrompts.set(taskId, options.prompt);
+    this.consultationCalls.set(taskId, (this.consultationCalls.get(taskId) ?? 0) + 1);
+
+    const spec = this.consultationQueues.get(taskId)?.shift();
+    // No queued spec: the Architect chose not to ask anything — write nothing, same as a real
+    // "no question" turn.
+    if (!spec) return 'CONSULTATION_READY';
+    if ('crash' in spec) throw new Error(spec.crash);
+
+    const fileMatch = CONSULTATION_FILE_PATTERN.exec(options.prompt);
+    if (!fileMatch) {
+      throw new Error(
+        `FakeClaudeRuntime: could not find a consultation file path in prompt:\n${options.prompt}`,
+      );
+    }
+    await writeFile(
+      fileMatch[1],
+      JSON.stringify({ question: spec.question, recommendation: spec.recommendation }),
+      'utf-8',
+    );
+    return 'CONSULTATION_READY';
   }
 }
