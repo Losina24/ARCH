@@ -32,6 +32,45 @@ async function writeFakeExecutable(dir: string, name: string, script: string): P
 }
 
 describe('runClaudeHeadless subprocess integration', () => {
+  // Regression test for a real production incident: a task's review prompt (brief + diff +
+  // corrections) can run well past Windows' ~32K-character command-line limit. Passing it as an
+  // argv element makes the OS refuse to even spawn `claude` (ENAMETOOLONG) on this exact
+  // platform — verified separately by hand against the real limit. This proves the actual
+  // property that makes the limit irrelevant: the full prompt travels through a real OS pipe
+  // (stdin) rather than argv, so its size never matters, using a prompt several times larger
+  // than the limit that broke the live run this test is guarding against.
+  it('delivers a prompt far larger than the Windows command-line limit through stdin, keeping it out of argv', async () => {
+    fakeBinDir = await mkdtemp(join(tmpdir(), 'arch-fake-claude-stdin-'));
+    await writeFakeExecutable(
+      fakeBinDir,
+      'claude',
+      `let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+  console.log(JSON.stringify({
+    type: 'result',
+    session_id: 'stdin-session',
+    result: JSON.stringify({ argv: process.argv.slice(2), inputLength: input.length }),
+  }));
+});
+`,
+    );
+    process.env.PATH = `${fakeBinDir}${delimiter}${originalPath ?? ''}`;
+
+    const hugePrompt = 'x'.repeat(200_000);
+    const result = await runClaudeHeadless({
+      prompt: hugePrompt,
+      model: 'sonnet',
+      cwd: fakeBinDir,
+    });
+
+    expect(result.sessionId).toBe('stdin-session');
+    const payload = JSON.parse(result.output) as { argv: string[]; inputLength: number };
+    expect(payload.inputLength).toBe(hugePrompt.length);
+    expect(payload.argv.some((arg) => arg.length > 1000)).toBe(false);
+  });
+
   it('delivers stream-json events before the subprocess has finished', async () => {
     fakeBinDir = await mkdtemp(join(tmpdir(), 'arch-fake-claude-stream-'));
     await writeFakeExecutable(

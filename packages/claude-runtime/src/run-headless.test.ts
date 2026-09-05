@@ -38,7 +38,6 @@ describe('runClaudeHeadless', () => {
     expect(command).toBe('claude');
     expect(args).toEqual([
       '-p',
-      'Add a function',
       '--model',
       'claude-sonnet-5',
       '--output-format',
@@ -47,7 +46,56 @@ describe('runClaudeHeadless', () => {
       '--setting-sources',
       'project,local',
     ]);
-    expect(opts).toMatchObject({ cwd: '/tmp/project' });
+    expect(opts).toMatchObject({ cwd: '/tmp/project', input: 'Add a function' });
+  });
+
+  // Regression test for a real production incident: a task's full review prompt (brief + diff +
+  // corrections) can easily run past Windows' ~32K-character command-line limit. Passing it as
+  // an argv element makes `execa` fail with ENAMETOOLONG before `claude` even starts — the CLI
+  // never gets a chance to reject or accept the call. The prompt must travel via stdin, which
+  // has no such limit, exactly like codex-runtime already does.
+  it('never puts the prompt in argv, regardless of size', async () => {
+    mockStdout({ session_id: 'session-1', result: 'done' });
+    const hugePrompt = 'x'.repeat(200_000);
+
+    await runClaudeHeadless({ prompt: hugePrompt, model: 'sonnet', cwd: '/tmp' });
+
+    const [, args, opts] = mockedExeca.mock.calls[0] ?? [];
+    expect(args).not.toContain(hugePrompt);
+    for (const arg of args ?? []) {
+      expect(typeof arg === 'string' ? arg.length : 0).toBeLessThan(1000);
+    }
+    expect(opts).toMatchObject({ input: hugePrompt });
+  });
+
+  it('delivers the prompt via stdin alongside --resume, independently of each other', async () => {
+    mockStdout({ session_id: 'session-1', result: 'done' });
+
+    await runClaudeHeadless({
+      prompt: 'Continue the previous work',
+      model: 'sonnet',
+      cwd: '/tmp',
+      resumeSessionId: 'session-0',
+    });
+
+    const [, args, opts] = mockedExeca.mock.calls[0] ?? [];
+    expect(args).toEqual(expect.arrayContaining(['--resume', 'session-0']));
+    expect(args).not.toContain('Continue the previous work');
+    expect(opts).toMatchObject({ input: 'Continue the previous work' });
+  });
+
+  // stdin has no escaping semantics at all — unlike argv, where execa/the shell must correctly
+  // quote quotes, backticks, `&&`, and embedded newlines for the child to see them literally.
+  // Moving the prompt off argv closes that whole class of "happened to work depending on how
+  // it got quoted" risk, not just the size limit.
+  it('delivers a prompt with argv-hostile characters unmodified via stdin', async () => {
+    mockStdout({ session_id: 'session-1', result: 'done' });
+    const trickyPrompt = 'Say "hi" && `echo pwned`\nline two\nline three';
+
+    await runClaudeHeadless({ prompt: trickyPrompt, model: 'sonnet', cwd: '/tmp' });
+
+    const [, , opts] = mockedExeca.mock.calls[0] ?? [];
+    expect(opts).toMatchObject({ input: trickyPrompt });
   });
 
   it('reports every JSONL event through onEvent', async () => {
@@ -246,6 +294,31 @@ describe('runClaudeHeadless', () => {
     await expect(
       runClaudeHeadless({ prompt: 'p', model: 'sonnet', cwd: '/tmp' }),
     ).rejects.toBeInstanceOf(ClaudeCliExecutionError);
+  });
+
+  // Regression test for the actual incident this suite exists to prevent: a spawn-time OS
+  // failure (ENAMETOOLONG, and plausibly ENOENT/E2BIG) happens before any process starts, so
+  // execa's error for it may carry no `.stdout` at all — unlike every other error case above,
+  // which all originate from a process that did start and produced output. Without this, such an
+  // error falls through every classifier and execa's raw, unsanitized `.message` (which used to
+  // embed the entire `-p <prompt>` argument) is thrown as-is.
+  it('wraps a spawn-time failure with no stdout in a short ClaudeCliExecutionError', async () => {
+    const spawnError = Object.assign(
+      new Error('Command failed with ENAMETOOLONG: claude -p "..." --model claude-sonnet-5 ...'),
+      {
+        code: 'ENAMETOOLONG',
+        command: 'claude -p "..." --model claude-sonnet-5 ...',
+        exitCode: undefined,
+      },
+    );
+    mockedExeca.mockRejectedValue(spawnError);
+
+    const promise = runClaudeHeadless({ prompt: 'p', model: 'sonnet', cwd: '/tmp' });
+    await expect(promise).rejects.toBeInstanceOf(ClaudeCliExecutionError);
+    await promise.catch((error: Error) => {
+      expect(error.message.split('\n').length).toBeLessThanOrEqual(2);
+      expect(error.message).not.toContain('claude -p');
+    });
   });
 
   it('wraps a failure with an unrelated terminal_reason in ClaudeCliExecutionError', async () => {
