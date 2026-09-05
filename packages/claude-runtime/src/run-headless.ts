@@ -100,12 +100,17 @@ interface ExecaLikeError {
   signal?: string;
 }
 
-// execa always attaches `stdout` (possibly an empty string) to the error it throws for any
-// failure that actually spawned the process — a plain, unrelated JS error thrown elsewhere never
-// has this property. Used to decide whether a raw execa error is safe to wrap in a short, custom
-// message, versus a non-execa error that must be left alone.
+// execa always attaches `stdout` to the error it throws for a failure that actually spawned a
+// process, but a pre-spawn OS-level failure (e.g. ENAMETOOLONG, a prompt too large for the
+// platform's command-line limit) never starts one and so has no `.stdout` at all — it does,
+// however, always carry `command` (execa attaches that to every error it produces, spawned or
+// not). Checking for `stdout` alone (as this used to) misses that case, letting execa's raw,
+// unsanitized message — the entire escaped command line included — leak through unwrapped.
+// Matching on either is what makes this catch both shapes. A plain, unrelated JS error thrown
+// elsewhere has neither. Used to decide whether a raw execa error is safe to wrap in a short,
+// custom message, versus a non-execa error that must be left alone.
 function isExecaLikeError(error: unknown): error is ExecaLikeError {
-  return typeof error === 'object' && error !== null && 'stdout' in error;
+  return typeof error === 'object' && error !== null && ('stdout' in error || 'command' in error);
 }
 
 // The CLI exits non-zero on both a pre-execution rejection and a mid-stream abort, but still
@@ -237,7 +242,6 @@ function toGenericExecutionError(error: unknown): ClaudeCliExecutionError | null
 export async function runClaudeHeadless(options: RunHeadlessOptions): Promise<RunHeadlessResult> {
   const args = [
     '-p',
-    options.prompt,
     '--model',
     resolveModelId(options.model),
     '--output-format',
@@ -266,10 +270,15 @@ export async function runClaudeHeadless(options: RunHeadlessOptions): Promise<Ru
   let stdout: string;
   let observingLiveStream = false;
   try {
-    // stream-json is the documented real-time format in Claude Code CLI 2.1.x.
+    // stream-json is the documented real-time format in Claude Code CLI 2.1.x. The prompt
+    // itself travels via stdin, not argv (`-p` alone reads it — see `claude --help`: "useful
+    // for pipes") — a task's full brief/diff/corrections easily exceeds Windows' ~32K-character
+    // command-line limit, which makes `execa` fail with ENAMETOOLONG before `claude` even
+    // starts. stdin has no such limit. Mirrors codex-runtime's identical `input` usage.
     const subprocess = execa('claude', args, {
       cwd: options.cwd,
       cancelSignal: options.signal,
+      input: options.prompt,
     });
     observingLiveStream = observeJsonlEvents(
       (subprocess as unknown as { stdout?: unknown }).stdout,

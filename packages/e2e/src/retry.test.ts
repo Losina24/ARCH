@@ -911,3 +911,32 @@ describe('automatic stream-abort retry', () => {
     expect(runtime?.workerCallCount('TASK-001')).toBe(4);
   });
 });
+
+describe('architect review crash', () => {
+  // Regression test for a real production incident: when the Architect's review call itself
+  // crashes (e.g. a spawn-time failure, ENAMETOOLONG for an oversized prompt), the daemon used
+  // to discard the real error and surface only a generic "Architect review failed for task X" —
+  // giving a human staring at the failed task no way to tell what actually happened without
+  // going to read daemon.log by hand. The real error must now reach the task's failureReason.
+  it("surfaces the real crash reason in the task's failureReason instead of a generic message", async () => {
+    runtime?.queuePlan({
+      projectMarkdown: '# Brief',
+      tasks: [{ id: 'TASK-001', title: 'Write greeting file' }],
+    });
+    runtime?.queueWorker('TASK-001', async () => {});
+    runtime?.queueReview('TASK-001', { crash: 'ENAMETOOLONG: prompt too large for argv' });
+
+    const runBlocked = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
+      15000,
+    );
+    const run = await createAndApprove('Write a greeting file');
+    await runBlocked;
+
+    const plan = await daemon.client.getRunPlan({ runId: run.runId });
+    const failedTask = plan?.tasksIndex.tasks[0];
+    expect(failedTask?.status).toBe('failed');
+    expect(failedTask?.failureReason).toContain('ENAMETOOLONG: prompt too large for argv');
+  });
+});

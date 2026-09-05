@@ -1,6 +1,6 @@
 {
   "name": "@losina/config",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Loading and resolving ARCH configuration (.agentmeshrc.json) and .arch/ paths.",
   "license": "MIT",
   "type": "module",

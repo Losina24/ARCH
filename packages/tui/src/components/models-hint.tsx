@@ -12,10 +12,9 @@ const DIM_FACTOR = 0.35;
 const ROLES: Array<{
   label: string;
   t: number;
-  field: 'architectModel' | 'tlModel' | 'workerModel';
+  field: 'architectModel' | 'workerModel';
 }> = [
   { label: 'Architect', t: 0, field: 'architectModel' },
-  { label: 'TL', t: 0.5, field: 'tlModel' },
   { label: 'Worker', t: 1, field: 'workerModel' },
 ];
 

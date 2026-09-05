@@ -61,7 +61,11 @@ export function waitForReviewOutcome(params: WaitForReviewOutcomeParams): Promis
         event.state === 'failed'
       ) {
         cleanup();
-        reject(new Error(`Architect review failed for task ${taskId}`));
+        reject(
+          new Error(
+            `Architect review failed for task ${taskId}: ${event.detail ?? 'no detail available'}`,
+          ),
+        );
       }
     });
   });

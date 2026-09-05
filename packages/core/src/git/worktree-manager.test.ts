@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createWorktree, deleteBranch, mergeWorktree, removeWorktree } from './worktree-manager.js';
+import {
+  createWorktree,
+  deleteBranch,
+  mergeDependencyBranches,
+  mergeWorktree,
+  removeWorktree,
+} from './worktree-manager.js';
 
 describe('git worktree lifecycle', () => {
   let repo: string;
@@ -119,5 +125,68 @@ describe('git worktree lifecycle', () => {
 
     expect(a.branch).not.toBe(b.branch);
     expect(a.path).not.toBe(b.path);
+  });
+
+  describe('mergeDependencyBranches', () => {
+    it("merges a surviving dependency branch into the new worktree — the develop-branch case, where a dependency's feat/<id> was committed but deliberately never merged/deleted", async () => {
+      const dep = await createWorktree(repo, worktreesDir, 'TASK-A');
+      await writeFile(
+        join(dep.path, 'contract.ts'),
+        'export type Job = { id: string };\n',
+        'utf-8',
+      );
+      await execa('git', ['add', '-A'], { cwd: dep.path });
+      await execa('git', ['commit', '-m', 'TASK-A: define Job contract'], { cwd: dep.path });
+      // Deliberately not merged into repo and not cleaned up — repoRoot's HEAD never receives it.
+
+      const consumer = await createWorktree(repo, worktreesDir, 'TASK-B');
+      await mergeDependencyBranches(consumer, repo, ['TASK-A']);
+
+      await expect(readFile(join(consumer.path, 'contract.ts'), 'utf-8')).resolves.toBe(
+        'export type Job = { id: string };\n',
+      );
+    });
+
+    it('no-ops when the dependency branch no longer exists (already merged and deleted)', async () => {
+      const dep = await createWorktree(repo, worktreesDir, 'TASK-A');
+      await writeFile(
+        join(dep.path, 'contract.ts'),
+        'export type Job = { id: string };\n',
+        'utf-8',
+      );
+      await execa('git', ['add', '-A'], { cwd: dep.path });
+      await execa('git', ['commit', '-m', 'TASK-A: define Job contract'], { cwd: dep.path });
+      await mergeWorktree(repo, dep);
+      await removeWorktree(repo, dep);
+      await deleteBranch(repo, dep);
+
+      const consumer = await createWorktree(repo, worktreesDir, 'TASK-B');
+
+      // Doesn't throw even though feat/TASK-A is gone — it's a plain skip, not an error.
+      await mergeDependencyBranches(consumer, repo, ['TASK-A']);
+      // Already present via the normal repoRoot HEAD, not via mergeDependencyBranches — confirms
+      // this really was a no-op rather than coincidentally working some other way.
+      await expect(readFile(join(consumer.path, 'contract.ts'), 'utf-8')).resolves.toBe(
+        'export type Job = { id: string };\n',
+      );
+    });
+
+    it('merges every surviving dependency branch when a task has more than one', async () => {
+      const depA = await createWorktree(repo, worktreesDir, 'TASK-A');
+      await writeFile(join(depA.path, 'a.ts'), 'export const a = 1;\n', 'utf-8');
+      await execa('git', ['add', '-A'], { cwd: depA.path });
+      await execa('git', ['commit', '-m', 'TASK-A'], { cwd: depA.path });
+
+      const depB = await createWorktree(repo, worktreesDir, 'TASK-B');
+      await writeFile(join(depB.path, 'b.ts'), 'export const b = 2;\n', 'utf-8');
+      await execa('git', ['add', '-A'], { cwd: depB.path });
+      await execa('git', ['commit', '-m', 'TASK-B'], { cwd: depB.path });
+
+      const consumer = await createWorktree(repo, worktreesDir, 'TASK-C');
+      await mergeDependencyBranches(consumer, repo, ['TASK-A', 'TASK-B']);
+
+      await expect(readFile(join(consumer.path, 'a.ts'), 'utf-8')).resolves.toContain('a = 1');
+      await expect(readFile(join(consumer.path, 'b.ts'), 'utf-8')).resolves.toContain('b = 2');
+    });
   });
 });
