@@ -122,7 +122,8 @@ describe('dispatchWorker', () => {
     });
 
     const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
-    expect(call?.prompt).toContain('The Team Lead ran');
+    expect(call?.prompt).toContain("This task's automated checks were run");
+    expect(call?.prompt).not.toContain('Team Lead');
   });
 
   it('embeds humanMessage in the prompt on a fresh dispatch', async () => {

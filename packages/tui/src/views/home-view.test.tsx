@@ -8,7 +8,6 @@ import { HomeView } from './home-view.js';
 const config: AgentMeshConfig = {
   models: {
     architectModel: 'claude-opus-5',
-    tlModel: 'claude-sonnet-5',
     workerModel: 'claude-sonnet-5',
   },
   execution: {
@@ -124,7 +123,6 @@ describe('HomeView', () => {
       ...config,
       models: {
         architectModel: 'gpt-5.6-sol',
-        tlModel: 'gpt-5.6-terra',
         workerModel: 'gpt-5.6-luna',
       },
     };
@@ -144,7 +142,6 @@ describe('HomeView', () => {
 
     await vi.waitFor(() => expect(lastFrame()).toContain('gpt-5.6-sol'));
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('gpt-5.6-terra');
     expect(frame).toContain('gpt-5.6-luna');
     expect(frame).not.toContain('claude-opus-5');
   });
@@ -296,7 +293,7 @@ describe('HomeView', () => {
     expect(lastFrame()).toContain('Describe your task and give instructions');
   });
 
-  it('shows the models hint with the configured Architect/TL/Worker models', async () => {
+  it('shows the models hint with the configured Architect/Worker models', async () => {
     const client = mockClient();
     const { lastFrame } = render(
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
@@ -304,7 +301,6 @@ describe('HomeView', () => {
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Architect'));
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('TL');
     expect(frame).toContain('Worker');
     expect(frame).toContain('claude-opus-5');
     expect(frame).toContain('claude-sonnet-5');

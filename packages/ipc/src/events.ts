@@ -1,6 +1,6 @@
 import type { RunPhase, TaskStatus } from '@losina/schemas';
 
-export type AgentRole = 'architect' | 'tl' | 'worker';
+export type AgentRole = 'architect' | 'worker';
 
 export type AgentActivityState =
   | 'spawning'

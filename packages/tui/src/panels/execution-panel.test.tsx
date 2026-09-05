@@ -27,7 +27,6 @@ describe('ExecutionPanel', () => {
     const { lastFrame } = render(<ExecutionPanel plan={null} events={[]} {...panelProps} />);
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Architect');
-    expect(frame).toContain('TL');
     expect(frame).toContain('Waiting');
     expect(frame).toContain('Not ready yet.');
     expect(frame).toContain('Project status');
