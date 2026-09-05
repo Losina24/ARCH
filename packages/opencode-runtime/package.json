@@ -1,6 +1,6 @@
 {
   "name": "@losina/opencode-runtime",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Headless invocation of the OpenCode CLI for ARCH agents.",
   "license": "MIT",
   "type": "module",
