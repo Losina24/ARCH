@@ -164,6 +164,24 @@ describe('RunDetailView', () => {
     expect(lastFrame()).toContain('x abort');
   });
 
+  it('approves the run via "/ approve" — a stray space right after the slash still counts', async () => {
+    const approved = runMeta({ phase: 'implementation' });
+    const plan: RunPlan = { projectMarkdown: '# Brief', tasksIndex: { tasks: [] } };
+    const client = mockClient({
+      getRunPlan: vi.fn().mockResolvedValue(plan),
+      approveRun: vi.fn().mockResolvedValue(approved),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'definition' })} onBack={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
+    await type(stdin, '/ approve');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() => expect(client.approveRun).toHaveBeenCalledWith({ runId: 'run-1' }));
+  });
+
   it('aborts the run via the /abort command in the planification input', async () => {
     const aborted = runMeta({ phase: 'implementation' });
     const client = mockClient({ abortRun: vi.fn().mockResolvedValue(aborted) });

@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Slash commands now tolerate a stray space right after the `/` (`/ quit` behaves exactly like `/quit`) and are matched case-insensitively everywhere they're recognized — the live suggestions dropdown, the home screen's command parser, and the `/approve`/`/abort`/`/skip`/`/done` checks in the run detail view, which previously compared the typed text against a literal string and so silently treated a mistyped command as free-form text sent to the Architect.
 - ARCH now runs on native Windows. The daemon's IPC now uses a Windows named pipe instead of a real AF_UNIX socket, which could fail to bind with `EACCES` regardless of directory permissions; the CLI and the daemon it spawns now agree on the current repo's path (`git rev-parse --show-toplevel`'s forward-slash output is normalized to the native separator before being hashed into the daemon's socket/pipe name, and the spawned daemon is handed that resolved `cwd` explicitly instead of re-deriving its own); file paths surfaced in agent progress events are always forward-slash regardless of platform; and the `archctl`/`arch-terminal` build no longer shells out to `chmod`, which doesn't exist on Windows.
 
 ## [0.2.0]
