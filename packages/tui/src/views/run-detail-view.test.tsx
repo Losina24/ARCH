@@ -761,7 +761,7 @@ describe('RunDetailView', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('message-12'));
   });
 
-  it('resumes a failed worker with a prompt from the Console tab', async () => {
+  it("shows a failed worker's transcript on the Console tab, with no input box to message it directly", async () => {
     let handler: ((event: ArchMeshEvent) => void) | undefined;
     const plan: RunPlan = {
       projectMarkdown: '# Brief',
@@ -780,20 +780,22 @@ describe('RunDetailView', () => {
         ],
       },
     };
-    const resumed = runMeta({});
     const client = mockClient({
       getRunPlan: vi.fn().mockResolvedValue(plan),
-      retryTask: vi.fn().mockResolvedValue(resumed),
+      retryTask: vi.fn(),
       onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
         handler = eventHandler;
         return vi.fn();
       }),
     });
+    // implementation phase, no pending consultation: no conversation input of any kind should
+    // render, on any tab — proving the Console tab itself has no way to message an agent directly,
+    // as opposed to merely being between a feedback/grilling box shown for an unrelated reason.
     const { lastFrame, stdin } = render(
-      <RunDetailView client={client} run={runMeta({})} onBack={vi.fn()} />,
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
+    await tick();
     handler?.({
       type: 'agent:activity',
       runId: 'run-1',
@@ -811,103 +813,19 @@ describe('RunDetailView', () => {
     await press(stdin, '\x1b[B');
     await press(stdin, '\r');
 
+    await vi.waitFor(() => expect(lastFrame()).toContain('failed · TASK-001'));
+    expect(lastFrame()).not.toContain('Message this agent…');
+    expect(lastFrame()).not.toContain('Type feedback');
+
+    // Typing does nothing to the agent — there is no box left to receive it.
     await type(stdin, 'Try the v2 approach.');
-    await press(stdin, '\r');
-
-    await vi.waitFor(() =>
-      expect(client.retryTask).toHaveBeenCalledWith({
-        runId: 'run-1',
-        taskId: 'TASK-001',
-        message: 'Try the v2 approach.',
-      }),
-    );
-    await vi.waitFor(() => expect(lastFrame()).toContain('Message sent — resuming the agent.'));
-  });
-
-  it('rejects a prompt sent to an agent that has no failed task to resume', async () => {
-    const client = mockClient({ retryTask: vi.fn() });
-    const { lastFrame, stdin } = render(
-      <RunDetailView client={client} run={runMeta({})} onBack={vi.fn()} />,
-    );
-
-    await tick();
-    await press(stdin, '\t');
-    await press(stdin, '\t');
-    await press(stdin, 's');
-    await press(stdin, '\r');
-
-    await type(stdin, 'Try again.');
-    await press(stdin, '\r');
-
-    await vi.waitFor(() =>
-      expect(lastFrame()).toContain(
-        'Only a failed or awaiting-help worker agent can be resumed with a message.',
-      ),
-    );
     expect(client.retryTask).not.toHaveBeenCalled();
-  });
 
-  it('resumes an awaiting_human worker with a prompt from the Console tab', async () => {
-    let handler: ((event: ArchMeshEvent) => void) | undefined;
-    const plan: RunPlan = {
-      projectMarkdown: '# Brief',
-      tasksIndex: {
-        tasks: [
-          {
-            id: 'TASK-001',
-            title: 'Build the login form',
-            status: 'awaiting_human',
-            dependsOn: [],
-            file: 'task-1.md',
-            correctionFiles: [],
-            retries: 1,
-            checks: [],
-          },
-        ],
-      },
-    };
-    const resumed = runMeta({});
-    const client = mockClient({
-      getRunPlan: vi.fn().mockResolvedValue(plan),
-      retryTask: vi.fn().mockResolvedValue(resumed),
-      onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
-        handler = eventHandler;
-        return vi.fn();
-      }),
-    });
-    const { lastFrame, stdin } = render(
-      <RunDetailView client={client} run={runMeta({})} onBack={vi.fn()} />,
-    );
-
-    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
-    handler?.({
-      type: 'agent:activity',
-      runId: 'run-1',
-      agentId: 'worker-TASK-001',
-      role: 'worker',
-      state: 'idle-waiting',
-      taskId: 'TASK-001',
-    });
-    await tick();
-
-    await press(stdin, '\t');
-    await press(stdin, '\t');
-    await press(stdin, 's');
-    await press(stdin, '\x1b[B');
-    await press(stdin, '\x1b[B');
-    await press(stdin, '\r');
-
-    await type(stdin, 'Grant the permission and retry.');
-    await press(stdin, '\r');
-
+    // Esc still clears the selection, same as it always did.
+    await press(stdin, '\x1b');
     await vi.waitFor(() =>
-      expect(client.retryTask).toHaveBeenCalledWith({
-        runId: 'run-1',
-        taskId: 'TASK-001',
-        message: 'Grant the permission and retry.',
-      }),
+      expect(lastFrame()).toContain('Select an agent to access its terminal.'),
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('Message sent — resuming the agent.'));
   });
 
   it('expands the task Console to full width with c, hiding Task definition, then collapses back', async () => {
@@ -956,7 +874,7 @@ describe('RunDetailView', () => {
     expect(lastFrame()).toContain('Do the thing.');
   });
 
-  it('does not show the task-console message input for a task that is not failed or awaiting_human', async () => {
+  it('never shows a message input on the task detail page, whatever the task status', async () => {
     const plan: RunPlan = {
       projectMarkdown: '# Brief',
       tasksIndex: {
@@ -964,11 +882,11 @@ describe('RunDetailView', () => {
           {
             id: 'TASK-001',
             title: 'Build the login form',
-            status: 'pending',
+            status: 'failed',
             dependsOn: [],
             file: 'task-1.md',
             correctionFiles: [],
-            retries: 0,
+            retries: 1,
             checks: [],
           },
         ],
@@ -978,21 +896,24 @@ describe('RunDetailView', () => {
       getRunPlan: vi.fn().mockResolvedValue(plan),
       getTaskFile: vi.fn().mockResolvedValue('# Build the login form\n\nDo the thing.'),
     });
+    // implementation phase, no pending consultation: openTask alone must be enough to hide the
+    // conversation surface, regardless of how "urgent" the opened task's own status is.
     const { lastFrame, stdin } = render(
-      <RunDetailView client={client} run={runMeta({})} onBack={vi.fn()} />,
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
+    await tick();
     await press(stdin, '\t');
-    await vi.waitFor(() => expect(lastFrame()).toContain('› Monitor ‹'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Progress'));
     await press(stdin, 's');
     await press(stdin, '\r');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Do the thing.'));
     expect(lastFrame()).not.toContain('Message this agent…');
+    expect(lastFrame()).not.toContain('Reply to the Architect');
   });
 
-  it("shows a human prompt sent from the task console in both the task page and the agent's Console tab", async () => {
+  it("still shows a human prompt sent via the CLI in both the task page and the agent's Console tab, even though the TUI has no box to send it from", async () => {
     let handler: ((event: ArchMeshEvent) => void) | undefined;
     const plan: RunPlan = {
       projectMarkdown: '# Brief',
@@ -1011,21 +932,19 @@ describe('RunDetailView', () => {
         ],
       },
     };
-    const resumed = runMeta({});
     const client = mockClient({
       getRunPlan: vi.fn().mockResolvedValue(plan),
       getTaskFile: vi.fn().mockResolvedValue('# Build the login form\n\nDo the thing.'),
-      retryTask: vi.fn().mockResolvedValue(resumed),
       onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
         handler = eventHandler;
         return vi.fn();
       }),
     });
     const { lastFrame, stdin } = render(
-      <RunDetailView client={client} run={runMeta({})} onBack={vi.fn()} />,
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
+    await tick();
     handler?.({
       type: 'agent:activity',
       runId: 'run-1',
@@ -1037,22 +956,13 @@ describe('RunDetailView', () => {
     await tick();
 
     await press(stdin, '\t');
-    await vi.waitFor(() => expect(lastFrame()).toContain('› Monitor ‹'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Progress'));
     await press(stdin, 's');
     await press(stdin, '\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Do the thing.'));
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('Message this agent…'));
-    await type(stdin, 'Try the v2 approach.');
-    await press(stdin, '\r');
-
-    await vi.waitFor(() =>
-      expect(client.retryTask).toHaveBeenCalledWith({
-        runId: 'run-1',
-        taskId: 'TASK-001',
-        message: 'Try the v2 approach.',
-      }),
-    );
-
+    // Simulates a message that arrived from elsewhere entirely — e.g. `arch retry-task`, or a
+    // consultation reply — never something this render typed or submitted itself.
     handler?.({
       type: 'human:prompt-sent',
       runId: 'run-1',
@@ -1066,12 +976,299 @@ describe('RunDetailView', () => {
     await press(stdin, '\x1b');
     await vi.waitFor(() => expect(lastFrame()).not.toContain('Do the thing.'));
     await press(stdin, '\t');
-    await vi.waitFor(() => expect(lastFrame()).toContain('› Console ‹'));
+    await vi.waitFor(() =>
+      expect(lastFrame()).toContain('Select an agent to access its terminal.'),
+    );
     await press(stdin, 's');
     await press(stdin, '\x1b[B');
     await press(stdin, '\x1b[B');
     await press(stdin, '\r');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Try the v2 approach.'));
+  });
+
+  it('shows a consultation question and auto-switches to the Overview tab to display it', async () => {
+    let handler: ((event: ArchMeshEvent) => void) | undefined;
+    const client = mockClient({
+      onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
+        handler = eventHandler;
+        return vi.fn();
+      }),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
+    );
+
+    await tick();
+    await press(stdin, '\t');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Progress'));
+
+    handler?.({
+      type: 'consultation:question-asked',
+      runId: 'run-1',
+      taskId: 'TASK-001',
+      seq: 1,
+      question: 'Root or dist?',
+      recommendation: 'Root.',
+      failureReason: 'Automated checks kept failing.',
+    });
+    // Auto-switched back to Overview: the Monitor-only "Progress" legend is gone, replaced by the
+    // consultation panel and its reply box. (The recommendation itself lives further down the
+    // scrollable body and isn't asserted here — a 24-row test terminal can clip it, same as it
+    // would a long real one; "sends the typed reply..." below covers Enter-sends-recommendation
+    // directly against component state, not pixels.)
+    await vi.waitFor(() => expect(lastFrame()).toContain('eply to the Architect'));
+    expect(lastFrame()).not.toContain('Progress');
+    expect(lastFrame()).toContain('Automated checks kept failing.');
+    expect(lastFrame()).toContain('Root or dist?');
+  });
+
+  it('sends the typed reply to retryTask verbatim, and Enter on an empty reply sends the recommendation', async () => {
+    let handler: ((event: ArchMeshEvent) => void) | undefined;
+    const resumed = runMeta({ phase: 'implementation' });
+    const client = mockClient({
+      retryTask: vi.fn().mockResolvedValue(resumed),
+      onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
+        handler = eventHandler;
+        return vi.fn();
+      }),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
+    );
+
+    await tick();
+    handler?.({
+      type: 'consultation:question-asked',
+      runId: 'run-1',
+      taskId: 'TASK-001',
+      seq: 1,
+      question: 'Root or dist?',
+      recommendation: 'Create it at the repository root.',
+      failureReason: 'Automated checks kept failing.',
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('eply to the Architect'));
+
+    await type(stdin, 'Put it under dist/ instead.');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() =>
+      expect(client.retryTask).toHaveBeenCalledWith({
+        runId: 'run-1',
+        taskId: 'TASK-001',
+        message: 'Put it under dist/ instead.',
+      }),
+    );
+
+    // Second question, answered with an empty reply this time.
+    handler?.({
+      type: 'consultation:answered',
+      runId: 'run-1',
+      taskId: 'TASK-001',
+      seq: 1,
+      skipped: false,
+    });
+    handler?.({
+      type: 'consultation:question-asked',
+      runId: 'run-1',
+      taskId: 'TASK-002',
+      seq: 1,
+      question: 'Root or dist?',
+      recommendation: 'Create it at the repository root.',
+      failureReason: 'Automated checks kept failing.',
+    });
+    await tick();
+    await tick();
+    expect(lastFrame()).toContain('Root or dist?');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() =>
+      expect(client.retryTask).toHaveBeenCalledWith({
+        runId: 'run-1',
+        taskId: 'TASK-002',
+        message: 'Create it at the repository root.',
+      }),
+    );
+  });
+
+  it('dismisses a consultation via /skip without touching retryTask', async () => {
+    let handler: ((event: ArchMeshEvent) => void) | undefined;
+    const client = mockClient({
+      retryTask: vi.fn(),
+      dismissConsultation: vi.fn().mockResolvedValue(runMeta({ phase: 'implementation' })),
+      onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
+        handler = eventHandler;
+        return vi.fn();
+      }),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
+    );
+
+    await tick();
+    handler?.({
+      type: 'consultation:question-asked',
+      runId: 'run-1',
+      taskId: 'TASK-001',
+      seq: 1,
+      question: 'Root or dist?',
+      recommendation: 'Root.',
+      failureReason: 'Automated checks kept failing.',
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('eply to the Architect'));
+
+    await type(stdin, '/skip');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() =>
+      expect(client.dismissConsultation).toHaveBeenCalledWith({
+        runId: 'run-1',
+        taskId: 'TASK-001',
+      }),
+    );
+    expect(client.retryTask).not.toHaveBeenCalled();
+  });
+
+  it('hydrates a pending consultation from persisted history alone, with no live event at all', async () => {
+    const client = mockClient({
+      getRunEvents: vi.fn().mockResolvedValue([
+        {
+          event: {
+            type: 'consultation:question-asked',
+            runId: 'run-1',
+            taskId: 'TASK-001',
+            seq: 1,
+            question: 'Root or dist?',
+            recommendation: 'Root.',
+            failureReason: 'Automated checks kept failing.',
+          },
+          timestamp: 1000,
+        },
+      ]),
+    });
+    const { lastFrame } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'blocked' })} onBack={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Root or dist?'));
+    expect(lastFrame()).toContain('Automated checks kept failing.');
+  });
+
+  it('does not hydrate a consultation whose task already moved on to a non-terminal status', async () => {
+    const client = mockClient({
+      getRunEvents: vi.fn().mockResolvedValue([
+        {
+          event: {
+            type: 'consultation:question-asked',
+            runId: 'run-1',
+            taskId: 'TASK-001',
+            seq: 1,
+            question: 'Root or dist?',
+            recommendation: 'Root.',
+            failureReason: 'Automated checks kept failing.',
+          },
+          timestamp: 1000,
+        },
+        {
+          event: {
+            type: 'task:status-changed',
+            runId: 'run-1',
+            taskId: 'TASK-001',
+            status: 'pending',
+          },
+          timestamp: 2000,
+        },
+      ]),
+    });
+    const { lastFrame } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'blocked' })} onBack={vi.fn()} />,
+    );
+
+    await tick();
+    expect(lastFrame()).not.toContain('needs your input');
+  });
+
+  it('shows a navigable command dropdown while typing a slash command in the conversation box', async () => {
+    const plan: RunPlan = { projectMarkdown: '# Brief', tasksIndex: { tasks: [] } };
+    const client = mockClient({
+      getRunPlan: vi.fn().mockResolvedValue(plan),
+      approveRun: vi.fn(),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'definition' })} onBack={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
+    await type(stdin, '/a');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approve'));
+    expect(lastFrame()).toContain('/abort');
+
+    // Down moves the highlight from /approve (first) to /abort (second); Tab then completes the
+    // input with whichever is highlighted, without running it.
+    await press(stdin, '\x1b[B');
+    await press(stdin, '\t');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('/abort '));
+    expect(client.approveRun).not.toHaveBeenCalled();
+  });
+
+  it('runs the highlighted command on Enter even when the typed text is only a prefix', async () => {
+    const approved = runMeta({ phase: 'implementation' });
+    const plan: RunPlan = { projectMarkdown: '# Brief', tasksIndex: { tasks: [] } };
+    const client = mockClient({
+      getRunPlan: vi.fn().mockResolvedValue(plan),
+      approveRun: vi.fn().mockResolvedValue(approved),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'definition' })} onBack={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
+    // "/app" matches only /approve, so it's the highlighted (and only) suggestion by default.
+    await type(stdin, '/app');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() => expect(client.approveRun).toHaveBeenCalledWith({ runId: 'run-1' }));
+  });
+
+  it('runs the highlighted command on Enter from a consultation reply too, not just plan feedback', async () => {
+    let handler: ((event: ArchMeshEvent) => void) | undefined;
+    const client = mockClient({
+      dismissConsultation: vi.fn().mockResolvedValue(runMeta({ phase: 'implementation' })),
+      retryTask: vi.fn(),
+      onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
+        handler = eventHandler;
+        return vi.fn();
+      }),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
+    );
+
+    await tick();
+    handler?.({
+      type: 'consultation:question-asked',
+      runId: 'run-1',
+      taskId: 'TASK-001',
+      seq: 1,
+      question: 'Root or dist?',
+      recommendation: 'Root.',
+      failureReason: 'Automated checks kept failing.',
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('eply to the Architect'));
+
+    // "/sk" matches only /skip, so it's highlighted by default — Enter should dismiss, not send
+    // "/sk" itself as a literal reply to the Worker.
+    await type(stdin, '/sk');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() =>
+      expect(client.dismissConsultation).toHaveBeenCalledWith({
+        runId: 'run-1',
+        taskId: 'TASK-001',
+      }),
+    );
+    expect(client.retryTask).not.toHaveBeenCalled();
   });
 });

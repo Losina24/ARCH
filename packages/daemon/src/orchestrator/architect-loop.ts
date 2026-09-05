@@ -109,6 +109,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
             model: request.model,
             correctionFilePath: request.correctionFilePath,
             workerSummary: request.workerSummary,
+            dependencyScopes: request.dependencyScopes,
             resumeSessionId: architectSessionId,
             signal,
             onProgress: (progress) =>
@@ -180,6 +181,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
             role: 'architect',
             taskId: next.event.taskId,
             state: 'failed',
+            detail: summarizeActivityFailure(error),
           });
         }
         continue;
@@ -211,7 +213,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           maxRetries: request.maxRetries,
           model: request.model,
           consultationFilePath: request.consultationFilePath,
-          dependencyScopes: request.dependencyScopes,
           resumeSessionId: architectSessionId,
           signal,
           onProgress: (progress) =>
