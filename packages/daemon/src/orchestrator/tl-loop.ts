@@ -12,6 +12,7 @@ import {
   getWorkingDiff,
   installWorktreeDependencies,
   loadRunSessions,
+  mergeDependencyBranches,
   mergeWorktree,
   removeWorktree,
   revertFiles,
@@ -35,6 +36,7 @@ import {
   isInfraFailure,
 } from '@losina/validator';
 import { activityFromProgress } from './agent-progress.js';
+import { resolveDependencyBriefs } from './dependency-context.js';
 import type { Mutex } from './mutex.js';
 import { RunAbortedError } from './run-aborted-error.js';
 import { resolveTaskRepoRoot } from './task-repo-root.js';
@@ -170,6 +172,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
   };
 
   const taskMarkdown = await readFile(join(runDir, task.file), 'utf-8');
+  const dependencies = await resolveDependencyBriefs(tasksIndex, task, runDir);
   const initialSessions = await loadRunSessions(runDir);
   let workerSessionId = initialSessions.taskSessions[task.id];
   let correctionMarkdown: string | undefined;
@@ -235,6 +238,12 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
       const unlockCreate = await gitMutex.lock();
       try {
         worktree = await createWorktree(repoRoot, worktreesDir, task.id);
+        // Staying inside this same lock matters: it serializes against a concurrent
+        // dependency's own cleanupWorktree/deleteBranch, so "does feat/<depId> still exist"
+        // can't go stale between the check and the merge below.
+        if (task.dependsOn.length > 0) {
+          await mergeDependencyBranches(worktree, repoRoot, task.dependsOn);
+        }
       } finally {
         unlockCreate();
       }
@@ -272,6 +281,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
         correctionMarkdown,
         correctionSource,
         humanMessage: correctionMarkdown === undefined ? humanMessage : undefined,
+        dependencies,
         signal,
         detectChanges: config.execution.useWorktrees ? undefined : getChangedFiles,
         onProgress: (progress) =>
@@ -453,6 +463,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
         correctionMarkdowns,
         gitDiff,
         workerSummary: dispatch.summary,
+        dependencyScopes: dependencies.flatMap((dependency) => dependency.scope),
       });
 
       bus.emit({ type: 'review:requested', runId, taskId: task.id, seq: reviewSeq, requestPath });
