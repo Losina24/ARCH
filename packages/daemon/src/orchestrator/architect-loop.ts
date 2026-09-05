@@ -1,11 +1,5 @@
 import { reviewTask } from '@losina/architect';
-import {
-  type RunEventBus,
-  loadReviewRequest,
-  loadRunSessions,
-  saveRunSessions,
-  writeReviewResponse,
-} from '@losina/core';
+import { type RunEventBus, loadReviewRequest, writeReviewResponse } from '@losina/core';
 import type { ReviewRequestedEvent } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
 import { activityFromProgress } from './agent-progress.js';
@@ -47,9 +41,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
   });
 
   const loop = (async () => {
-    const initialSessions = await loadRunSessions(runDir);
-    let architectSessionId = initialSessions.architectSessionId;
-
     while (!stopped) {
       if (signal.aborted) return;
 
@@ -82,7 +73,11 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           model: request.model,
           correctionFilePath: request.correctionFilePath,
           workerSummary: request.workerSummary,
-          resumeSessionId: architectSessionId,
+          // Deliberately never resumed — see the matching comment on the Worker dispatch in
+          // tl-loop.ts. Every review prompt already carries the task brief, every prior
+          // correction, and the current diff, so a fresh session has everything a resumed one
+          // would have, without a run-long conversation growing across every task's reviews.
+          resumeSessionId: undefined,
           signal,
           onProgress: (progress) =>
             bus.emit(
@@ -97,10 +92,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
               ),
             ),
         });
-
-        architectSessionId = review.sessionId;
-        const latest = await loadRunSessions(runDir);
-        await saveRunSessions(runDir, { ...latest, architectSessionId });
 
         bus.emit({
           type: 'agent:activity',

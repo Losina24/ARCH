@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- The Worker and the Architect no longer resume their model session between correction rounds: every worker dispatch (a task's first attempt or any later correction) and every Architect review now start a fresh session instead of replaying the prior conversation. Nothing is lost by this — the correction prompt already carries the full history of prior corrections plus the current diff, and the review prompt already carries the task brief, every prior correction, and the diff — so a fresh session has everything a resumed one would have had, without a task's or a run's accumulated conversation growing without bound across many correction/review rounds.
+
 ### Fixed
 - ARCH now runs on native Windows. The daemon's IPC now uses a Windows named pipe instead of a real AF_UNIX socket, which could fail to bind with `EACCES` regardless of directory permissions; the CLI and the daemon it spawns now agree on the current repo's path (`git rev-parse --show-toplevel`'s forward-slash output is normalized to the native separator before being hashed into the daemon's socket/pipe name, and the spawned daemon is handed that resolved `cwd` explicitly instead of re-deriving its own); file paths surfaced in agent progress events are always forward-slash regardless of platform; and the `archctl`/`arch-terminal` build no longer shells out to `chmod`, which doesn't exist on Windows.
 

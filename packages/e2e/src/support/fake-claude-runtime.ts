@@ -71,6 +71,7 @@ export class FakeClaudeRuntime {
   private readonly reviewQueues = new Map<string, ReviewVerdictSpec[]>();
   private readonly workerCalls = new Map<string, number>();
   private readonly reviewPrompts = new Map<string, string>();
+  private readonly reviewResumeSessionIds = new Map<string, Array<string | undefined>>();
 
   queuePlan(spec: PlanSpec): void {
     this.planQueue.push(spec);
@@ -78,6 +79,11 @@ export class FakeClaudeRuntime {
 
   lastReviewPrompt(taskId: string): string | undefined {
     return this.reviewPrompts.get(taskId);
+  }
+
+  /** `resumeSessionId` as seen by each successive review call for this task, oldest first. */
+  reviewResumeSessionIdsFor(taskId: string): Array<string | undefined> {
+    return this.reviewResumeSessionIds.get(taskId) ?? [];
   }
 
   queueWorker(taskId: string, handler: WorkerHandler): void {
@@ -175,6 +181,9 @@ export class FakeClaudeRuntime {
   private async writeReview(options: RunHeadlessOptions): Promise<string> {
     const taskId = extractReviewTaskId(options.prompt);
     this.reviewPrompts.set(taskId, options.prompt);
+    const resumeSessionIds = this.reviewResumeSessionIds.get(taskId) ?? [];
+    resumeSessionIds.push(options.resumeSessionId);
+    this.reviewResumeSessionIds.set(taskId, resumeSessionIds);
     const verdict = this.reviewQueues.get(taskId)?.shift() ?? 'approve';
     if (verdict === 'approve') return 'APPROVED';
 

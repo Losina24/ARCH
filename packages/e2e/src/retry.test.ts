@@ -93,6 +93,47 @@ describe('correction and retry', () => {
     expect(runtime?.workerCallCount('TASK-001')).toBe(2);
   });
 
+  it('never resumes the Worker session between correction rounds on the same task', async () => {
+    const resumeSessionIds: Array<string | undefined> = [];
+    runtime?.queuePlan({
+      projectMarkdown: '# Brief',
+      tasks: [
+        {
+          id: 'TASK-001',
+          title: 'Write marker file',
+          checks: [
+            {
+              name: 'marker-exists',
+              command: 'node',
+              args: ['-e', "process.exit(require('fs').existsSync('marker.txt') ? 0 : 1)"],
+            },
+          ],
+        },
+      ],
+    });
+    runtime?.queueWorker('TASK-001', async ({ resumeSessionId }) => {
+      resumeSessionIds.push(resumeSessionId);
+    });
+    runtime?.queueWorker('TASK-001', async ({ cwd, resumeSessionId }) => {
+      resumeSessionIds.push(resumeSessionId);
+      await writeFile(join(cwd, 'marker.txt'), 'ok', 'utf-8');
+    });
+    runtime?.queueReview('TASK-001', 'approve');
+
+    const runDone = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+    await createAndApprove('Write a marker file');
+    await runDone;
+
+    // Two dispatches happened (the initial attempt and the correction round), and neither one
+    // was told to resume a prior session — each got a fresh one, even though the correction round
+    // immediately follows the first attempt's own dispatch in the very same task cycle.
+    expect(resumeSessionIds).toEqual([undefined, undefined]);
+  });
+
   it('marks a task as failed due to an infra issue without spending a worker correction retry', async () => {
     runtime?.queuePlan({
       projectMarkdown: '# Brief',
@@ -179,6 +220,33 @@ describe('correction and retry', () => {
     expect(task).toMatchObject({ status: 'done', retries: 1 });
     expect(task?.correctionFiles).toHaveLength(1);
     expect(runtime?.workerCallCount('TASK-001')).toBe(2);
+  });
+
+  it('never resumes the Architect session between two reviews of the same task', async () => {
+    runtime?.queuePlan({
+      projectMarkdown: '# Brief',
+      tasks: [{ id: 'TASK-001', title: 'Write greeting file' }],
+    });
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      await writeFile(join(cwd, 'greeting.txt'), 'hi', 'utf-8');
+    });
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      await writeFile(join(cwd, 'greeting.txt'), 'hello from ARCH\n', 'utf-8');
+    });
+    runtime?.queueReview('TASK-001', { correctionMarkdown: 'Use a friendlier greeting.' });
+    runtime?.queueReview('TASK-001', 'approve');
+
+    const runDone = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+    await createAndApprove('Write a greeting file');
+    await runDone;
+
+    // Two reviews happened for the same task (rejected, then approved), and neither told the
+    // Architect to resume the other's session.
+    expect(runtime?.reviewResumeSessionIdsFor('TASK-001')).toEqual([undefined, undefined]);
   });
 
   it("forwards the worker's own summary to the Architect's review prompt", async () => {
