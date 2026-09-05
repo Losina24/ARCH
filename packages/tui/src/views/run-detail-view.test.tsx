@@ -69,6 +69,29 @@ describe('RunDetailView', () => {
     expect((lastFrame() ?? '').split('\n')).toHaveLength(23);
   });
 
+  it('keeps the total output within the terminal height once typed feedback wraps onto a second line', async () => {
+    const client = mockClient();
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'definition' })} onBack={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
+    // useTerminalRows/useTerminalColumns fall back to 24 rows / 80 columns under
+    // ink-testing-library — the feedback box's inner width is narrower than that (borders +
+    // padding), so a message this long wraps onto a second visible line. Before this view
+    // measured the footer's real height instead of assuming a fixed row count per section
+    // (see the `footerRef`/`footerHeight` wiring above bodyHeight), the extra wrapped line
+    // wasn't accounted for: total output height reached the terminal's row count, which
+    // trips Ink 5's full-screen clear-and-redraw on every keystroke — the reported
+    // bottom-of-screen flicker.
+    const longFeedback =
+      'This feedback message is intentionally long enough that it must wrap onto a second visible line inside the input box';
+    await type(stdin, longFeedback);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain(longFeedback.slice(0, 20)));
+    expect((lastFrame() ?? '').split('\n').length).toBeLessThanOrEqual(23);
+  });
+
   it('lands on the planification tab showing the prompt, models, and a waiting status', async () => {
     const client = mockClient();
     const { lastFrame } = render(

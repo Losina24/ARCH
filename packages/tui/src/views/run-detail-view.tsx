@@ -1,8 +1,8 @@
 import type { ArchClient } from '@losina/daemon-client';
 import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@losina/schemas';
-import { Box, Text, useInput } from 'ink';
-import { useEffect, useRef, useState } from 'react';
+import { Box, type DOMElement, Text, measureElement, useInput } from 'ink';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { deriveAgentStatuses } from '../agent-status.js';
 import { isCommand } from '../commands.js';
 import { type CommandHint, CommandHints } from '../components/command-hints.js';
@@ -35,16 +35,18 @@ const HEADER_LABEL = 'ARCH Terminal';
 const MIN_TITLE_GAP = 14;
 const SCROLL_STEP = 3;
 
-// Fixed row budget so the whole view never exceeds the terminal height —
-// header and footer stay pinned, and only the body scrolls internally.
+// Row budget so the whole view never exceeds the terminal height — header and
+// footer stay pinned, and only the body scrolls internally. The header is a
+// fixed height (its title is truncated to fit, never wraps), but the footer's
+// height is measured for real: command hints, the status message, and the
+// feedback/grilling/agent-prompt inputs (which grow up to 3 lines of typed or
+// pasted text, see MultilineTextInput's MAX_VISIBLE_ROWS) can each render
+// taller than a single line depending on their content and the terminal's
+// width, so a fixed row count for them would eventually under-reserve space,
+// push the total output height to (or past) the terminal's row count, and
+// trip Ink 5's full-screen clear-and-redraw path below — visible as flicker
+// concentrated at the bottom of the screen.
 const HEADER_ROWS = 5; // top margin + title/tab-bar line + margin + divider line + margin
-const FOOTER_ROWS = 2; // top margin + the status bar line
-const STATUS_MESSAGE_ROWS = 2; // top margin + the transient status line
-const COMMAND_ROWS = 2; // top margin + the command-hints line
-const FEEDBACK_ROWS = 4; // top margin + gradient box (3 rows)
-const GRILLING_ANSWER_ROWS = 4; // top margin + gradient box (3 rows)
-const AGENT_PROMPT_ROWS = 4; // top margin + gradient box (3 rows)
-const BLOCKED_MESSAGE_ROWS = 2; // top margin + the blocked-project warning line
 const MIN_BODY_ROWS = 3;
 // Ink 5 clears the entire terminal whenever rendered output is as tall as the TTY. Keeping one
 // row unused makes animated frames use its normal cursor-based redraw path instead.
@@ -482,17 +484,28 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const rows = useTerminalRows();
   const width = Math.max(20, columns - 2);
 
-  const reservedRows =
-    HEADER_ROWS +
-    FOOTER_ROWS +
-    COMMAND_ROWS +
-    (status ? STATUS_MESSAGE_ROWS : 0) +
-    (showFeedbackInput ? FEEDBACK_ROWS : 0) +
-    (showGrillingInput ? GRILLING_ANSWER_ROWS : 0) +
-    (showAgentPromptInput ? AGENT_PROMPT_ROWS : 0) +
-    (showTaskConsoleInput ? AGENT_PROMPT_ROWS : 0) +
-    (showBlockedMessage ? BLOCKED_MESSAGE_ROWS : 0);
-  const bodyHeight = Math.max(MIN_BODY_ROWS, rows - reservedRows - RENDER_HEADROOM_ROWS);
+  const footerRef = useRef<DOMElement>(null);
+  const [footerHeight, setFooterHeight] = useState(0);
+
+  const bodyHeight = Math.max(
+    MIN_BODY_ROWS,
+    rows - HEADER_ROWS - footerHeight - RENDER_HEADROOM_ROWS,
+  );
+
+  // Measures the footer's true rendered height after every render (mirroring how ScrollBox
+  // measures body content, see scroll-box.tsx), instead of assuming a fixed row count per
+  // section. Unlike ScrollBox's own measurement (which only refines scroll-clamping math
+  // inside a box whose height is already fixed), this one feeds straight back into
+  // `bodyHeight` itself — a stale measurement doesn't just misreport, it makes the *next*
+  // render's total output taller than the terminal, which is exactly the condition that
+  // trips Ink 5's full-screen clear. useLayoutEffect (rather than useEffect) corrects it
+  // synchronously, before Ink flushes the frame, so the oversized intermediate render is
+  // never actually written to the terminal — only the corrected one is.
+  useLayoutEffect(() => {
+    if (!footerRef.current) return;
+    const measured = measureElement(footerRef.current).height;
+    setFooterHeight((current) => (current === measured ? current : measured));
+  });
   const maxScrollOffset = Math.max(0, scrollMetrics.contentHeight - scrollMetrics.viewportHeight);
   const scrollPageSize = Math.max(1, scrollMetrics.viewportHeight);
   const scrollContextKey = liveOpenTask
@@ -837,73 +850,75 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
           />
         )}
       </Box>
-      {status && (
-        <Box marginTop={1}>
-          <Text dimColor>{status}</Text>
+      <Box ref={footerRef} flexDirection="column">
+        {status && (
+          <Box marginTop={1}>
+            <Text dimColor>{status}</Text>
+          </Box>
+        )}
+        <Box marginTop={1} justifyContent="space-between">
+          <CommandHints hints={commandHints} />
+          {(showFeedbackInput ||
+            showGrillingInput ||
+            showAgentPromptInput ||
+            showTaskConsoleInput) && <Text color={statusColor}>{statusText}</Text>}
         </Box>
-      )}
-      <Box marginTop={1} justifyContent="space-between">
-        <CommandHints hints={commandHints} />
-        {(showFeedbackInput ||
-          showGrillingInput ||
-          showAgentPromptInput ||
-          showTaskConsoleInput) && <Text color={statusColor}>{statusText}</Text>}
-      </Box>
-      {showFeedbackInput && (
+        {showFeedbackInput && (
+          <Box marginTop={1}>
+            <FeedbackInput
+              feedback={feedback}
+              onFeedbackChange={setFeedback}
+              onSubmitFeedback={submitFeedback}
+              busy={busy}
+              width={width}
+            />
+          </Box>
+        )}
+        {showGrillingInput && (
+          <Box marginTop={1}>
+            <GrillingAnswerInput
+              value={grillingAnswer}
+              onChange={setGrillingAnswer}
+              onSubmit={submitGrillingAnswer}
+              busy={busy}
+              width={width}
+            />
+          </Box>
+        )}
+        {showAgentPromptInput && (
+          <Box marginTop={1}>
+            <AgentPromptInput
+              value={agentPrompt}
+              onChange={setAgentPrompt}
+              onSubmit={submitAgentPrompt}
+              busy={busy}
+              width={width}
+            />
+          </Box>
+        )}
+        {showTaskConsoleInput && (
+          <Box marginTop={1}>
+            <AgentPromptInput
+              value={taskConsolePrompt}
+              onChange={setTaskConsolePrompt}
+              onSubmit={submitTaskConsolePrompt}
+              busy={busy}
+              width={width}
+            />
+          </Box>
+        )}
+        {showBlockedMessage && (
+          <Box marginTop={1}>
+            <Text color={hasFailedTask ? ERROR : WAITING}>
+              {hasFailedTask
+                ? 'Project blocked by a failed task — go to Console to fix it.'
+                : 'A task is waiting on you — go to Console to help it.'}
+            </Text>
+          </Box>
+        )}
         <Box marginTop={1}>
-          <FeedbackInput
-            feedback={feedback}
-            onFeedbackChange={setFeedback}
-            onSubmitFeedback={submitFeedback}
-            busy={busy}
-            width={width}
-          />
+          <StatusBar left={run.cwd} hints={[]} />
         </Box>
-      )}
-      {showGrillingInput && (
-        <Box marginTop={1}>
-          <GrillingAnswerInput
-            value={grillingAnswer}
-            onChange={setGrillingAnswer}
-            onSubmit={submitGrillingAnswer}
-            busy={busy}
-            width={width}
-          />
-        </Box>
-      )}
-      {showAgentPromptInput && (
-        <Box marginTop={1}>
-          <AgentPromptInput
-            value={agentPrompt}
-            onChange={setAgentPrompt}
-            onSubmit={submitAgentPrompt}
-            busy={busy}
-            width={width}
-          />
-        </Box>
-      )}
-      {showTaskConsoleInput && (
-        <Box marginTop={1}>
-          <AgentPromptInput
-            value={taskConsolePrompt}
-            onChange={setTaskConsolePrompt}
-            onSubmit={submitTaskConsolePrompt}
-            busy={busy}
-            width={width}
-          />
-        </Box>
-      )}
-      {showBlockedMessage && (
-        <Box marginTop={1}>
-          <Text color={hasFailedTask ? ERROR : WAITING}>
-            {hasFailedTask
-              ? 'Project blocked by a failed task — go to Console to fix it.'
-              : 'A task is waiting on you — go to Console to help it.'}
-          </Text>
-        </Box>
-      )}
-      <Box marginTop={1}>
-        <StatusBar left={run.cwd} hints={[]} />
       </Box>
     </Box>
   );

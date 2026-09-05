@@ -133,4 +133,23 @@ describe('reviewTask', () => {
     const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).toContain('Implemented add(a, b) using a simple sum.');
   });
+
+  it('includes dependencyScopes in the prompt sent to runAgentHeadless', async () => {
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'APPROVED' });
+
+    await reviewTask({
+      run,
+      taskId: task.id,
+      taskMarkdown: '# Task brief',
+      correctionMarkdowns: [],
+      gitDiff: 'diff',
+      model: 'sonnet',
+      correctionFilePath,
+      workerSummary: 'done',
+      dependencyScopes: ['src/job.ts'],
+    });
+
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
+    expect(call?.prompt).toContain('src/job.ts');
+  });
 });
