@@ -33,6 +33,10 @@ export type ReviewVerdictSpec = 'approve' | { correctionMarkdown: string };
 const RUN_ID_PATTERN = /[/\\]runs[/\\]([^/\\]+)[/\\]/;
 const REVIEW_TASK_ID_PATTERN = /implementing task\s+"([^"]+)"/;
 const CORRECTION_FILE_PATTERN = /exactly this path: "([^"]+)"/;
+// Matches buildWorkerPrompt's own self-identification line — tried before the cwd/prompt-scan
+// fallback in resolveWorkerTaskId. Deliberately distinct wording from REVIEW_TASK_ID_PATTERN so
+// the two never collide.
+const WORKER_TASK_ID_PATTERN = /Task under implementation: (\S+)/;
 
 function extractRunId(prompt: string): string {
   const match = RUN_ID_PATTERN.exec(prompt);
@@ -71,6 +75,7 @@ export class FakeClaudeRuntime {
   private readonly reviewQueues = new Map<string, ReviewVerdictSpec[]>();
   private readonly workerCalls = new Map<string, number>();
   private readonly reviewPrompts = new Map<string, string>();
+  private readonly workerPrompts = new Map<string, string>();
 
   queuePlan(spec: PlanSpec): void {
     this.planQueue.push(spec);
@@ -78,6 +83,10 @@ export class FakeClaudeRuntime {
 
   lastReviewPrompt(taskId: string): string | undefined {
     return this.reviewPrompts.get(taskId);
+  }
+
+  lastWorkerPrompt(taskId: string): string | undefined {
+    return this.workerPrompts.get(taskId);
   }
 
   queueWorker(taskId: string, handler: WorkerHandler): void {
@@ -154,6 +163,9 @@ export class FakeClaudeRuntime {
   }
 
   private resolveWorkerTaskId(options: RunHeadlessOptions): string {
+    const marker = WORKER_TASK_ID_PATTERN.exec(options.prompt);
+    if (marker) return marker[1];
+
     const cwdTaskId = basename(options.cwd);
     if (this.workerQueues.has(cwdTaskId)) return cwdTaskId;
 
@@ -165,6 +177,7 @@ export class FakeClaudeRuntime {
 
   private async runWorker(options: RunHeadlessOptions): Promise<string> {
     const taskId = this.resolveWorkerTaskId(options);
+    this.workerPrompts.set(taskId, options.prompt);
     this.workerCalls.set(taskId, (this.workerCalls.get(taskId) ?? 0) + 1);
 
     const handler = this.workerQueues.get(taskId)?.shift();

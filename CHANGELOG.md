@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Contract-first task sequencing: the Architect now explicitly identifies shared surface (types, interfaces, schemas, API/DTO shapes, DB migrations, config keys, event/protocol definitions) that several tasks would otherwise invent independently, gives it its own early no-dependency task, and makes every consumer `dependsOn` it — this guidance now also survives a `refine` round, which previously dropped all decomposition guidelines entirely. A dependent task's Worker prompt now names each dependency's id, title, and declared scope (falling back to a short excerpt when a dependency declared no scope) instead of being left to discover — or redefine — a contract blind, and the Architect's semantic review is now told which paths are owned by a task's dependencies so it can flag an out-of-scope edit as a defect. A dependency's committed-but-unmerged work (the case where the run's base branch is `develop`) is now merged into a dependent task's fresh worktree, so the contract is guaranteed to be physically present regardless of whether the base branch allowed the dependency to auto-merge.
+
 ### Fixed
 - ARCH now runs on native Windows. The daemon's IPC now uses a Windows named pipe instead of a real AF_UNIX socket, which could fail to bind with `EACCES` regardless of directory permissions; the CLI and the daemon it spawns now agree on the current repo's path (`git rev-parse --show-toplevel`'s forward-slash output is normalized to the native separator before being hashed into the daemon's socket/pipe name, and the spawned daemon is handed that resolved `cwd` explicitly instead of re-deriving its own); file paths surfaced in agent progress events are always forward-slash regardless of platform; and the `archctl`/`arch-terminal` build no longer shells out to `chmod`, which doesn't exist on Windows.
 

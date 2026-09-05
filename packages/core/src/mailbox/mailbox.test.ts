@@ -31,6 +31,7 @@ describe('mailbox', () => {
       correctionMarkdowns: [],
       gitDiff: 'diff --git a/src/index.js b/src/index.js',
       workerSummary: 'Implemented add(a, b) in src/index.js.',
+      dependencyScopes: [],
     };
 
     const path = await writeReviewRequest(runDir, request);
@@ -64,6 +65,7 @@ describe('mailbox', () => {
       correctionMarkdowns: [],
       gitDiff: '',
       workerSummary: 'Implemented task 1.',
+      dependencyScopes: ['src/job.ts'],
     };
     const second: ReviewRequest = {
       ...first,

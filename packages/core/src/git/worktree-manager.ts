@@ -125,6 +125,28 @@ export async function mergeWorktree(repoRoot: string, handle: WorktreeHandle): P
   await execa('git', ['merge', handle.branch], { cwd: repoRoot });
 }
 
+/**
+ * Guarantees a task's own worktree actually contains its dependencies' work, for the one case
+ * where that isn't already true by construction: an approved dependency committed to its own
+ * `feat/<id>` branch but was deliberately not merged/deleted (e.g. the run's base branch is
+ * protected — see PROTECTED_BRANCH in @losina/daemon's tl-loop), so a fresh worktree branching
+ * from repoRoot's current HEAD would otherwise never see it. In the common case (the dependency
+ * *was* merged into repoRoot, and its branch deleted as part of that), every one of these is a
+ * no-op — repoRoot's HEAD already contains the dependency's commit before this worktree ever
+ * branches from it.
+ */
+export async function mergeDependencyBranches(
+  worktree: WorktreeHandle,
+  repoRoot: string,
+  dependencyTaskIds: string[],
+): Promise<void> {
+  for (const depId of dependencyTaskIds) {
+    const branch = `feat/${depId}`;
+    if (!(await branchExists(repoRoot, `refs/heads/${branch}`))) continue;
+    await execa('git', ['merge', branch], { cwd: worktree.path });
+  }
+}
+
 export async function removeWorktree(repoRoot: string, handle: WorktreeHandle): Promise<void> {
   await execa('git', ['worktree', 'remove', handle.path], { cwd: repoRoot });
 }
