@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  type ConsultationRequest,
+  ConsultationRequestSchema,
   type ReviewRequest,
   ReviewRequestSchema,
   type ReviewResponse,
@@ -18,6 +20,10 @@ function requestPath(runDir: string, taskId: string, seq: number): string {
 
 function responsePath(runDir: string, taskId: string, seq: number): string {
   return join(mailboxDir(runDir), `${taskId}.response.${seq}.yaml`);
+}
+
+function consultationRequestPath(runDir: string, taskId: string, seq: number): string {
+  return join(mailboxDir(runDir), `${taskId}.consultation.${seq}.yaml`);
 }
 
 export async function writeReviewRequest(runDir: string, request: ReviewRequest): Promise<string> {
@@ -47,4 +53,20 @@ export async function writeReviewResponse(
 export async function loadReviewResponse(path: string): Promise<ReviewResponse> {
   const raw = await readFile(path, 'utf-8');
   return ReviewResponseSchema.parse(parse(raw));
+}
+
+export async function writeConsultationRequest(
+  runDir: string,
+  request: ConsultationRequest,
+): Promise<string> {
+  const validated = ConsultationRequestSchema.parse(request);
+  const path = consultationRequestPath(runDir, validated.taskId, validated.seq);
+  await mkdir(mailboxDir(runDir), { recursive: true });
+  await writeFile(path, stringify(validated), 'utf-8');
+  return path;
+}
+
+export async function loadConsultationRequest(path: string): Promise<ConsultationRequest> {
+  const raw = await readFile(path, 'utf-8');
+  return ConsultationRequestSchema.parse(parse(raw));
 }

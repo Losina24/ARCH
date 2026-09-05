@@ -1,4 +1,4 @@
-import type { RunMeta } from '@losina/schemas';
+import type { ConsultationFailureKind, RunMeta } from '@losina/schemas';
 
 const TASKS_INDEX_SCHEMA = `tasks:
   - id: TASK-001            # stable id, format TASK-NNN
@@ -197,4 +197,66 @@ ${gitDiff || '(no changes were staged)'}
 Decide:
 - If the change satisfies the Definition of Done: do not write any file, and end your final message with exactly one line: APPROVED
 - Otherwise: write precise, actionable correction instructions (what is missing or wrong, and what must change) to exactly this path: "${correctionFilePath}", then end your final message with exactly one line: NEEDS_CORRECTION`;
+}
+
+interface ConsultationPromptInput {
+  taskId: string;
+  taskMarkdown: string;
+  correctionMarkdowns: string[];
+  gitDiff: string;
+  workerSummary: string;
+  failureReason: string;
+  failureKind: ConsultationFailureKind;
+  retriesSpent: number;
+  maxRetries: number;
+  consultationFilePath: string;
+}
+
+export function buildConsultationPrompt(input: ConsultationPromptInput): string {
+  const {
+    taskId,
+    taskMarkdown,
+    correctionMarkdowns,
+    gitDiff,
+    workerSummary,
+    failureReason,
+    failureKind,
+    retriesSpent,
+    maxRetries,
+    consultationFilePath,
+  } = input;
+  const priorCorrections = correctionMarkdowns.length
+    ? `\n\nPrior correction rounds already sent to the worker for this task:\n${correctionMarkdowns
+        .map((markdown, index) => `--- correction round ${index + 1} ---\n${markdown}`)
+        .join('\n\n')}`
+    : '';
+
+  return `You are the ARCHITECT agent of ARCH. Stuck task: ${taskId}
+
+This task could not be completed automatically and is about to be handed to a human. You must NOT edit any source file yourself, and you must NOT modify any file outside "${consultationFilePath}".
+
+Task brief (this is the only brief the worker received):
+"""
+${taskMarkdown}
+"""
+${priorCorrections}
+
+Worker's own explanation of what it did in its last attempt (unverified — cross-check it against the actual diff below, don't take it at face value):
+"""
+${workerSummary || '(the worker left no explanation)'}
+"""
+
+Full diff of the worker's changes so far, if any:
+"""
+${gitDiff || '(no changes were staged)'}
+"""
+
+What actually stopped this task (${failureKind}, after ${retriesSpent}/${maxRetries} correction attempts):
+"""
+${failureReason}
+"""
+
+Decide what to ask the human. The human's reply is passed VERBATIM to the Worker as its note for the next attempt — no agent rewrites it. So ask for the one decision or piece of information you actually need, phrase it so someone who cannot see this repository's internals can answer it, and make "recommendation" the concrete instruction you would send the Worker yourself if the human just pressed Enter.
+
+Write your question to exactly this path: "${consultationFilePath}" as JSON matching this schema: {"question": string, "recommendation": string}. Then end your final message with exactly one line: CONSULTATION_READY`;
 }

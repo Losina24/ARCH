@@ -53,6 +53,15 @@ export interface RunAnswerGrillingQuestionRequest {
   skip?: boolean;
 }
 
+/**
+ * Dismisses a pending consultation question without acting on it — the task stays
+ * failed/awaiting_human, still retryable later via run.retryTask.
+ */
+export interface RunDismissConsultationRequest {
+  runId: string;
+  taskId: string;
+}
+
 export type DaemonShutdownRequest = Record<string, never>;
 
 export type ConfigGetRequest = Record<string, never>;

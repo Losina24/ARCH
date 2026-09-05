@@ -55,6 +55,13 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
   // UI visibility stay driven by the same single stream.
   const bus = new RunEventBus();
   const unsubscribeForwarding = bus.subscribe((event) => handle.broadcast(event));
+  // Recorded here (rather than read back off the persisted event log) so retryTask can look up
+  // the right seq synchronously when a human's reply arrives — see RunManager.pendingConsultations.
+  const unsubscribeConsultations = bus.subscribe((event) => {
+    if (event.type === 'consultation:question-asked' && event.runId === runId) {
+      runManager.setPendingConsultation(runId, event.taskId, event.seq);
+    }
+  });
   const architectLoop = startArchitectLoop({ run, runDir, config, bus, signal });
 
   // Applies a retry queued via RunManager.queueRetry (a task individually stuck while its
@@ -192,5 +199,6 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
   } finally {
     await architectLoop.stop();
     unsubscribeForwarding();
+    unsubscribeConsultations();
   }
 }
