@@ -14,6 +14,7 @@ export interface ReviewTaskInput {
   model: string;
   correctionFilePath: string;
   workerSummary: string;
+  dependencyScopes?: string[];
   resumeSessionId?: string;
   signal?: AbortSignal;
   onProgress?: (progress: AgentProgressEvent) => void;
@@ -35,6 +36,7 @@ export async function reviewTask(input: ReviewTaskInput): Promise<ReviewTaskOutp
     gitDiff,
     correctionFilePath,
     workerSummary,
+    dependencyScopes,
   } = input;
 
   const prompt = buildReviewPrompt({
@@ -44,6 +46,7 @@ export async function reviewTask(input: ReviewTaskInput): Promise<ReviewTaskOutp
     gitDiff,
     correctionFilePath,
     workerSummary,
+    dependencyScopes,
   });
 
   const { sessionId } = await runAgentHeadless({

@@ -28,6 +28,23 @@ type ArchitectJob =
   | { kind: 'review'; event: ReviewRequestedEvent }
   | { kind: 'consultation'; event: ConsultationRequestedEvent };
 
+const ACTIVITY_FAILURE_DETAIL_MAX_CHARS = 500;
+
+/**
+ * Short, bounded summary of a caught error, carried on the `agent:activity {state:'failed'}`
+ * event so `waitForReviewOutcome` (and ultimately a task's `failureReason`) can tell the human
+ * what actually went wrong instead of a generic "Architect review failed for task X". The
+ * runtimes' own error classes (`ClaudeCliExecutionError` and friends) already guarantee a short,
+ * argv-free message for the failure modes they know about; the truncation here is a final safety
+ * net for whatever else might be thrown, not the primary defense.
+ */
+export function summarizeActivityFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length > ACTIVITY_FAILURE_DETAIL_MAX_CHARS
+    ? `${message.slice(0, ACTIVITY_FAILURE_DETAIL_MAX_CHARS)}…`
+    : message;
+}
+
 /**
  * Sequentially drains review:requested and consultation:requested events for this run, resolving
  * each into its matching *:completed event, keeping a single architect session alive across every
@@ -194,6 +211,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           maxRetries: request.maxRetries,
           model: request.model,
           consultationFilePath: request.consultationFilePath,
+          dependencyScopes: request.dependencyScopes,
           resumeSessionId: architectSessionId,
           signal,
           onProgress: (progress) =>
@@ -250,6 +268,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           role: 'architect',
           taskId: next.event.taskId,
           state: 'failed',
+          detail: summarizeActivityFailure(error),
         });
         // waitForConsultationOutcome never rejects — it needs this event even on failure so it
         // doesn't hang until its own timeout for what's already a known-failed consultation.
