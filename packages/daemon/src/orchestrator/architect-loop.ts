@@ -3,8 +3,6 @@ import {
   type RunEventBus,
   loadConsultationRequest,
   loadReviewRequest,
-  loadRunSessions,
-  saveRunSessions,
   writeReviewResponse,
 } from '@losina/core';
 import type { ConsultationRequestedEvent, ReviewRequestedEvent } from '@losina/ipc';
@@ -73,9 +71,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
   });
 
   const loop = (async () => {
-    const initialSessions = await loadRunSessions(runDir);
-    let architectSessionId = initialSessions.architectSessionId;
-
     while (!stopped) {
       if (signal.aborted) return;
 
@@ -110,7 +105,11 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
             correctionFilePath: request.correctionFilePath,
             workerSummary: request.workerSummary,
             dependencyScopes: request.dependencyScopes,
-            resumeSessionId: architectSessionId,
+            // Deliberately never resumed — every review prompt already carries the task brief,
+            // every prior correction, and the current diff, so a fresh session has everything a
+            // resumed one would have, without a run-long conversation growing across every task's
+            // reviews (and now consultations too, see the consultStuckTask call below).
+            resumeSessionId: undefined,
             signal,
             onProgress: (progress) =>
               bus.emit(
@@ -125,10 +124,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
                 ),
               ),
           });
-
-          architectSessionId = review.sessionId;
-          const latest = await loadRunSessions(runDir);
-          await saveRunSessions(runDir, { ...latest, architectSessionId });
 
           bus.emit({
             type: 'agent:activity',
@@ -213,7 +208,11 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           maxRetries: request.maxRetries,
           model: request.model,
           consultationFilePath: request.consultationFilePath,
-          resumeSessionId: architectSessionId,
+          // Deliberately never resumed — see the matching comment on the Worker dispatch in
+          // tl-loop.ts and on the review call above. The consultation prompt already carries the
+          // task brief, every prior correction, the diff, and exactly why the deterministic rules
+          // gave up, so a fresh session has everything a resumed one would have.
+          resumeSessionId: undefined,
           signal,
           onProgress: (progress) =>
             bus.emit(
@@ -223,10 +222,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
               ),
             ),
         });
-
-        architectSessionId = result.sessionId;
-        const latest = await loadRunSessions(runDir);
-        await saveRunSessions(runDir, { ...latest, architectSessionId });
 
         bus.emit({
           type: 'agent:activity',

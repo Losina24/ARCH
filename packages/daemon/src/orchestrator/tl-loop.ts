@@ -198,7 +198,11 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
   const taskMarkdown = await readFile(join(runDir, task.file), 'utf-8');
   const dependencies = await resolveDependencyBriefs(tasksIndex, task, runDir);
   const initialSessions = await loadRunSessions(runDir);
-  let workerSessionId = initialSessions.taskSessions[task.id];
+  // Never seeded from a persisted session: the Worker is never resumed (see the dispatch call
+  // below), so there would be nothing to resume even if one were on disk from an earlier run of
+  // this daemon. Still tracked and persisted per dispatch purely for observability/debugging —
+  // it's never read back.
+  let workerSessionId: string | undefined;
   // Seeded from disk, not just zero: this task can be escalated to a consultation more than once
   // across SEPARATE runTlTaskCycle calls (a human retries it via retryTask, it fails again) — each
   // of those is a fresh call with its own in-memory state, so without this every daemon run's
@@ -401,7 +405,13 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
         taskMarkdown,
         worktree,
         model: config.models.workerModel,
-        resumeSessionId: workerSessionId,
+        // Deliberately never resumed: each dispatch (first attempt or any later correction
+        // round) starts the Worker with a fresh model session instead of replaying its prior
+        // conversation. The correction prompt already carries everything a resumed session
+        // would have added — the full correctionMarkdown history plus the current diff — so
+        // nothing is lost by not remembering the conversation itself, and every dispatch stays
+        // cheap regardless of how many correction rounds a task has already been through.
+        resumeSessionId: undefined,
         correctionMarkdown,
         correctionSource,
         humanMessage: correctionMarkdown === undefined ? humanMessage : undefined,
