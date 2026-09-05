@@ -1188,4 +1188,88 @@ describe('RunDetailView', () => {
     await tick();
     expect(lastFrame()).not.toContain('needs your input');
   });
+
+  it('shows a navigable command dropdown while typing a slash command in the conversation box', async () => {
+    const plan: RunPlan = { projectMarkdown: '# Brief', tasksIndex: { tasks: [] } };
+    const client = mockClient({
+      getRunPlan: vi.fn().mockResolvedValue(plan),
+      approveRun: vi.fn(),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'definition' })} onBack={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
+    await type(stdin, '/a');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approve'));
+    expect(lastFrame()).toContain('/abort');
+
+    // Down moves the highlight from /approve (first) to /abort (second); Tab then completes the
+    // input with whichever is highlighted, without running it.
+    await press(stdin, '\x1b[B');
+    await press(stdin, '\t');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('/abort '));
+    expect(client.approveRun).not.toHaveBeenCalled();
+  });
+
+  it('runs the highlighted command on Enter even when the typed text is only a prefix', async () => {
+    const approved = runMeta({ phase: 'implementation' });
+    const plan: RunPlan = { projectMarkdown: '# Brief', tasksIndex: { tasks: [] } };
+    const client = mockClient({
+      getRunPlan: vi.fn().mockResolvedValue(plan),
+      approveRun: vi.fn().mockResolvedValue(approved),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'definition' })} onBack={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Plan ready'));
+    // "/app" matches only /approve, so it's the highlighted (and only) suggestion by default.
+    await type(stdin, '/app');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() => expect(client.approveRun).toHaveBeenCalledWith({ runId: 'run-1' }));
+  });
+
+  it('runs the highlighted command on Enter from a consultation reply too, not just plan feedback', async () => {
+    let handler: ((event: ArchMeshEvent) => void) | undefined;
+    const client = mockClient({
+      dismissConsultation: vi.fn().mockResolvedValue(runMeta({ phase: 'implementation' })),
+      retryTask: vi.fn(),
+      onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
+        handler = eventHandler;
+        return vi.fn();
+      }),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
+    );
+
+    await tick();
+    handler?.({
+      type: 'consultation:question-asked',
+      runId: 'run-1',
+      taskId: 'TASK-001',
+      seq: 1,
+      question: 'Root or dist?',
+      recommendation: 'Root.',
+      failureReason: 'Automated checks kept failing.',
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('eply to the Architect'));
+
+    // "/sk" matches only /skip, so it's highlighted by default — Enter should dismiss, not send
+    // "/sk" itself as a literal reply to the Worker.
+    await type(stdin, '/sk');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() =>
+      expect(client.dismissConsultation).toHaveBeenCalledWith({
+        runId: 'run-1',
+        taskId: 'TASK-001',
+      }),
+    );
+    expect(client.retryTask).not.toHaveBeenCalled();
+  });
 });

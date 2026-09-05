@@ -4,8 +4,9 @@ import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@losina/schemas';
 import { Box, type DOMElement, Text, measureElement, useInput } from 'ink';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { deriveAgentStatuses } from '../agent-status.js';
-import { isCommand } from '../commands.js';
+import { type SlashCommand, isCommand, matchCommands } from '../commands.js';
 import { type CommandHint, CommandHints } from '../components/command-hints.js';
+import { CommandSuggestions } from '../components/command-suggestions.js';
 import { GradientText } from '../components/gradient-text.js';
 import { ScrollBox, type ScrollMetrics } from '../components/scroll-box.js';
 import { StatusBar } from '../components/status-bar.js';
@@ -36,6 +37,16 @@ const HEADER_MARGIN = 6;
 const HEADER_LABEL = 'ARCH Terminal';
 const MIN_TITLE_GAP = 14;
 const SCROLL_STEP = 3;
+
+// The commands the Architect conversation box recognizes, for the live suggestions dropdown —
+// see submitFeedback/submitGrillingAnswer/submitConsultationReply below for what they actually do.
+const DEFINITION_COMMANDS: SlashCommand[] = [
+  { name: 'approve', description: 'Approve the plan and start the run' },
+  { name: 'abort', description: 'Abort the run' },
+];
+const SKIP_COMMAND: SlashCommand[] = [
+  { name: 'skip', description: 'Skip this question and move on' },
+];
 
 // Row budget so the whole view never exceeds the terminal height — header and
 // footer stay pinned, and only the body scrolls internally. The header is a
@@ -391,6 +402,19 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     setDraft('');
   }, [conversationMode, pendingConsultation?.taskId]);
 
+  // The commands each conversation mode actually recognizes (see submitFeedback/
+  // submitGrillingAnswer/submitConsultationReply above) — used only to drive the live
+  // suggestions dropdown, never to decide what a submitted command does.
+  const conversationCommands: SlashCommand[] =
+    conversationMode === 'definition' ? DEFINITION_COMMANDS : conversationMode ? SKIP_COMMAND : [];
+  const commandSuggestions = matchCommands(draft, conversationCommands);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resets the command-menu highlight whenever the typed text changes, not on any value read inside
+  useEffect(() => {
+    setSuggestionIndex(0);
+  }, [draft]);
+
   // Auto-switches to the Overview tab the first time a given consultation surfaces, so it's
   // visible without the human having to notice it and navigate manually — but only once per
   // question, and never while a task detail page is open (openTask hides the conversation
@@ -552,7 +576,19 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     }
   };
 
-  const submitConversation = async (value: string) => {
+  const submitConversation = async (rawValue: string) => {
+    // Same convention as the home screen's command dropdown: a typed prefix that doesn't exactly
+    // match a recognized command, but the suggestions dropdown has candidates for it, resolves to
+    // whichever one is arrow-key-highlighted — so "/app" + Enter runs /approve instead of being
+    // sent to the Architect as literal feedback.
+    const isExactCommand = conversationCommands.some((command) =>
+      isCommand(rawValue, command.name),
+    );
+    const value =
+      !isExactCommand && commandSuggestions.length > 0
+        ? `/${commandSuggestions[Math.min(suggestionIndex, commandSuggestions.length - 1)]?.name ?? ''}`
+        : rawValue;
+
     if (conversationMode === 'definition') {
       await submitFeedback(value);
     } else if (conversationMode === 'grilling') {
@@ -685,6 +721,27 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       return;
     }
 
+    // Command-suggestions navigation takes priority over tab-switching/scrolling — it only ever
+    // activates while the conversation box is open AND the draft is a recognized-mode command
+    // prefix (matchCommands returns [] otherwise), so it can't shadow Tab/arrows the rest of the
+    // time. Enter is handled by ArchitectConversationInput's own onSubmit, same as the home
+    // screen's pattern, not here.
+    if (commandSuggestions.length > 0) {
+      if (key.upArrow) {
+        setSuggestionIndex((index) => Math.max(0, index - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSuggestionIndex((index) => Math.min(commandSuggestions.length - 1, index + 1));
+        return;
+      }
+      if (key.tab) {
+        const clampedIndex = Math.min(suggestionIndex, commandSuggestions.length - 1);
+        setDraft(`/${commandSuggestions[clampedIndex]?.name ?? ''} `);
+        return;
+      }
+    }
+
     if (key.tab) {
       const currentIndex = TABS.indexOf(tab);
       const nextIndex = key.shift
@@ -779,10 +836,16 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
         { key: 'Esc', label: 'back to diagram' },
         { key: 'c', label: taskConsoleExpanded ? 'show task definition' : 'expand console' },
       ]
-    : [
-        { key: 'Tab', label: 'switch tab' },
-        { key: 'Esc', label: 'back' },
-      ];
+    : commandSuggestions.length > 0
+      ? [
+          { key: '↑/↓', label: 'select command' },
+          { key: 'Tab', label: 'complete command' },
+          { key: 'Esc', label: 'back' },
+        ]
+      : [
+          { key: 'Tab', label: 'switch tab' },
+          { key: 'Esc', label: 'back' },
+        ];
   if (!openTask) {
     if (run.phase === 'definition') {
       commandHints.push({ key: '/approve · /abort', label: 'plan actions' });
@@ -814,7 +877,13 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     !openTask && !conversationMode && tab === 'overview' && taskSelectMode && tasks.length > 0;
   const arrowsSelectAgents =
     !conversationMode && tab === 'console' && agentSelectMode && agents.length > 0;
-  if (scrollMetrics.contentHeight > scrollMetrics.viewportHeight) {
+  // While the command dropdown is up, ↑/↓ navigate it (see the useInput handler above) rather
+  // than scroll — a "scroll" hint bound to the same keys at the same time would be misleading,
+  // and would also collide with the dropdown's own ↑/↓ hint above as a duplicate React key.
+  if (
+    commandSuggestions.length === 0 &&
+    scrollMetrics.contentHeight > scrollMetrics.viewportHeight
+  ) {
     const from = scrollOffset + 1;
     const to = Math.min(scrollMetrics.contentHeight, scrollOffset + scrollMetrics.viewportHeight);
     commandHints.push(
@@ -941,6 +1010,12 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
               width={width}
             />
           </Box>
+        )}
+        {conversationMode && commandSuggestions.length > 0 && (
+          <CommandSuggestions
+            commands={commandSuggestions}
+            selectedIndex={Math.min(suggestionIndex, commandSuggestions.length - 1)}
+          />
         )}
         {pendingConsultation && openTask && (
           <Box marginTop={1}>
