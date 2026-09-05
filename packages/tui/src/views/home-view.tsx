@@ -47,9 +47,15 @@ export function HomeView({
   const [runsIndex, setRunsIndex] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<RunMeta | null>(null);
   const [deleteError, setDeleteError] = useState('');
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
 
   const filteredRuns = filterRuns(runs, runsQuery);
   const commandSuggestions = matchHomeCommands(input);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resets the command-menu highlight whenever the typed text changes, not on any value read inside
+  useEffect(() => {
+    setSuggestionIndex(0);
+  }, [input]);
 
   useEffect(() => {
     client
@@ -94,6 +100,14 @@ export function HomeView({
       setInput('');
       if (parsed.known) {
         runCommand(parsed.name);
+      } else if (commandSuggestions.length > 0) {
+        // The typed text doesn't exactly match a command, but the suggestions dropdown is
+        // showing candidates — Enter accepts whichever one is arrow-key-highlighted, same as
+        // Tab does, so a partial command name plus Enter behaves like autocomplete-then-run
+        // instead of erroring.
+        const suggestion =
+          commandSuggestions[Math.min(suggestionIndex, commandSuggestions.length - 1)];
+        if (suggestion) runCommand(suggestion.name);
       } else {
         setStatus(`Unknown command: /${parsed.name} — try /help`);
       }
@@ -135,6 +149,21 @@ export function HomeView({
     }
 
     if (settingsOpen) return;
+
+    if (screen === 'splash' && commandSuggestions.length > 0) {
+      if (key.upArrow) {
+        setSuggestionIndex((index) => Math.max(0, index - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSuggestionIndex((index) => Math.min(commandSuggestions.length - 1, index + 1));
+        return;
+      }
+      if (key.tab) {
+        setInput(`/${commandSuggestions[suggestionIndex]?.name ?? ''} `);
+        return;
+      }
+    }
 
     if (screen === 'boot' || screen === 'splash') return;
 
@@ -191,7 +220,9 @@ export function HomeView({
       : screen === 'boot'
         ? []
         : screen === 'splash'
-          ? ['type to start a run', '/help commands']
+          ? commandSuggestions.length > 0
+            ? ['↑/↓ select', 'tab accept', '/help commands']
+            : ['type to start a run', '/help commands']
           : deleteTarget
             ? ['y confirm', 'n cancel']
             : ['type to filter', '↑/↓ select', 'enter open', 'ctrl+d delete', 'esc back'];
@@ -234,7 +265,10 @@ export function HomeView({
                   }
                   hint={
                     commandSuggestions.length > 0 ? (
-                      <CommandSuggestions commands={commandSuggestions} />
+                      <CommandSuggestions
+                        commands={commandSuggestions}
+                        selectedIndex={Math.min(suggestionIndex, commandSuggestions.length - 1)}
+                      />
                     ) : (
                       status || (config && <ModelsHint config={config} dim={dimSplash} />) || ''
                     )
