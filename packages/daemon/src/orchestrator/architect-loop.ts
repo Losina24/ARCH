@@ -23,6 +23,23 @@ export interface ArchitectLoopHandle {
   stop: () => Promise<void>;
 }
 
+const ACTIVITY_FAILURE_DETAIL_MAX_CHARS = 500;
+
+/**
+ * Short, bounded summary of a caught error, carried on the `agent:activity {state:'failed'}`
+ * event so `waitForReviewOutcome` (and ultimately a task's `failureReason`) can tell the human
+ * what actually went wrong instead of a generic "Architect review failed for task X". The
+ * runtimes' own error classes (`ClaudeCliExecutionError` and friends) already guarantee a short,
+ * argv-free message for the failure modes they know about; the truncation here is a final safety
+ * net for whatever else might be thrown, not the primary defense.
+ */
+export function summarizeActivityFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length > ACTIVITY_FAILURE_DETAIL_MAX_CHARS
+    ? `${message.slice(0, ACTIVITY_FAILURE_DETAIL_MAX_CHARS)}…`
+    : message;
+}
+
 /**
  * Sequentially drains review:requested events for this run and resolves each
  * one into a review:completed event, keeping a single architect session
@@ -150,6 +167,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           role: 'architect',
           taskId: next.taskId,
           state: 'failed',
+          detail: summarizeActivityFailure(error),
         });
       }
     }

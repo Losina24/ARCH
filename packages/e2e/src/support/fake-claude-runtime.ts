@@ -26,7 +26,13 @@ export type WorkerHandler = (
   options: RunHeadlessOptions,
   // biome-ignore lint/suspicious/noConfusingVoidType: sync/async handlers may legitimately return nothing
 ) => Promise<string | undefined> | void | string;
-export type ReviewVerdictSpec = 'approve' | { correctionMarkdown: string };
+export type ReviewVerdictSpec =
+  | 'approve'
+  | { correctionMarkdown: string }
+  /** Simulates the review call itself crashing (e.g. a spawn-time failure) instead of
+   * producing a verdict — reproduces how a real `reviewTask` failure reaches `architect-loop.ts`'s
+   * catch block, for tests that assert on how that failure is reported. */
+  | { crash: string };
 
 // Paths embedded in real prompts come from `path.join`, so on Windows they're
 // backslash-separated (e.g. "...\runs\<id>\project.md") rather than the POSIX form.
@@ -177,6 +183,7 @@ export class FakeClaudeRuntime {
     this.reviewPrompts.set(taskId, options.prompt);
     const verdict = this.reviewQueues.get(taskId)?.shift() ?? 'approve';
     if (verdict === 'approve') return 'APPROVED';
+    if ('crash' in verdict) throw new Error(verdict.crash);
 
     // correctionFilePath is already an absolute path under the run's archDir (see
     // review-task.ts) — the real Claude CLI writes there directly, so this must too instead
