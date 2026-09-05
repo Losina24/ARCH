@@ -4,6 +4,7 @@ import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@losina/schemas';
 import { Box, type DOMElement, Text, measureElement, useInput } from 'ink';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { deriveAgentStatuses } from '../agent-status.js';
+import { isCommand } from '../commands.js';
 import { type CommandHint, CommandHints } from '../components/command-hints.js';
 import { GradientText } from '../components/gradient-text.js';
 import { ScrollBox, type ScrollMetrics } from '../components/scroll-box.js';
@@ -351,12 +352,12 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     const trimmed = value.trim();
     if (!trimmed || busy) return;
 
-    if (trimmed === '/approve') {
+    if (isCommand(trimmed, 'approve')) {
       setFeedback('');
       await approve();
       return;
     }
-    if (trimmed === '/abort') {
+    if (isCommand(trimmed, 'abort')) {
       setFeedback('');
       await abort();
       return;
@@ -386,7 +387,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     if (busy) return;
     const trimmed = value.trim();
 
-    if (trimmed === '/skip' || trimmed === '/done') {
+    if (isCommand(trimmed, 'skip') || isCommand(trimmed, 'done')) {
       setBusy(true);
       setStatus('Skipping the remaining questions…');
       try {
