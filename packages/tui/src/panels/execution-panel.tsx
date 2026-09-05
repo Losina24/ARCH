@@ -2,7 +2,8 @@ import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
 import type { RunPlan } from '@losina/schemas';
 import { Box, Text } from 'ink';
 import { buildActivityLog } from '../activity-log.js';
-import { agentRoleColor, buildAgentLabels, deriveAgentStatuses } from '../agent-status.js';
+import { buildAgentLabels } from '../agent-status.js';
+import { AgentsList } from '../components/agents-list.js';
 import { DagGraph } from '../components/dag-graph.js';
 import { GradientText } from '../components/gradient-text.js';
 import { LegendBox } from '../components/legend-box.js';
@@ -21,19 +22,11 @@ interface ExecutionPanelProps {
   selectedTaskId?: string | null;
 }
 
-const AGENT_LABEL_WIDTH = 12;
 const LEFT_COLUMN_MIN_WIDTH = 28;
 const LEFT_COLUMN_MAX_WIDTH = 40;
 const LEFT_COLUMN_RATIO = 0.32;
 const COLUMN_GAP = 2;
 const MAX_LOG_ENTRIES = 8;
-
-const CATEGORY_COLOR = {
-  idle: MUTED,
-  working: SUCCESS,
-  blocked: ERROR,
-  waiting: WAITING,
-} as const;
 
 const LOG_TONE_COLOR = {
   info: MUTED,
@@ -42,23 +35,6 @@ const LOG_TONE_COLOR = {
   error: ERROR,
   waiting: WAITING,
 } as const;
-
-function AgentsList({ events }: { events: ArchMeshEvent[] }) {
-  const agents = deriveAgentStatuses(events);
-
-  return (
-    <Box flexDirection="column">
-      {agents.map((agent) => (
-        <Text key={agent.agentId}>
-          <Text bold color={agentRoleColor(agent.role)}>
-            {`${agent.label}:`.padEnd(AGENT_LABEL_WIDTH)}
-          </Text>
-          <Text color={CATEGORY_COLOR[agent.category]}>{agent.statusText}</Text>
-        </Text>
-      ))}
-    </Box>
-  );
-}
 
 export function ExecutionPanel({
   plan,

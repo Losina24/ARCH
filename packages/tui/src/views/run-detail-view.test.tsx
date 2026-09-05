@@ -809,6 +809,7 @@ describe('RunDetailView', () => {
 
     await press(stdin, '\t');
     await press(stdin, '\t');
+    await press(stdin, '\t');
     await press(stdin, 's');
     await press(stdin, '\x1b[B');
     await press(stdin, '\x1b[B');
@@ -976,6 +977,7 @@ describe('RunDetailView', () => {
 
     await press(stdin, '\x1b');
     await vi.waitFor(() => expect(lastFrame()).not.toContain('Do the thing.'));
+    await press(stdin, '\t');
     await press(stdin, '\t');
     await vi.waitFor(() =>
       expect(lastFrame()).toContain('Select an agent to access its terminal.'),
@@ -1271,5 +1273,79 @@ describe('RunDetailView', () => {
       }),
     );
     expect(client.retryTask).not.toHaveBeenCalled();
+  });
+
+  it('shows the Architect explicitly waiting alongside a working Worker on the Agents tab', async () => {
+    let handler: ((event: ArchMeshEvent) => void) | undefined;
+    const client = mockClient({
+      onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
+        handler = eventHandler;
+        return vi.fn();
+      }),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
+    );
+
+    await tick();
+    handler?.({
+      type: 'agent:activity',
+      runId: 'run-1',
+      agentId: 'worker-TASK-001',
+      role: 'worker',
+      state: 'using-tool',
+      detail: 'Editing file',
+      file: 'src/foo.ts',
+      taskId: 'TASK-001',
+    });
+    await tick();
+
+    await press(stdin, '\t');
+    await press(stdin, '\t');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Worker 1:'));
+    // The Architect has never emitted an activity event in this run — deriveAgentStatuses already
+    // reports that as "Waiting" with no daemon change needed for this tab to show it.
+    expect(lastFrame()).toContain('Architect:');
+    expect(lastFrame()).toContain('Waiting');
+    expect(lastFrame()).toContain('Editing file · src/foo.ts · TASK-001');
+  });
+
+  it('interleaves activity from the Architect and a Worker into one attributed feed on the Agents tab', async () => {
+    let handler: ((event: ArchMeshEvent) => void) | undefined;
+    const client = mockClient({
+      onEvent: vi.fn((eventHandler: (event: ArchMeshEvent) => void) => {
+        handler = eventHandler;
+        return vi.fn();
+      }),
+    });
+    const { lastFrame, stdin } = render(
+      <RunDetailView client={client} run={runMeta({ phase: 'implementation' })} onBack={vi.fn()} />,
+    );
+
+    await tick();
+    handler?.({
+      type: 'agent:activity',
+      runId: 'run-1',
+      agentId: 'architect-run-1',
+      role: 'architect',
+      state: 'using-tool',
+      detail: 'Reviewing changes',
+      taskId: 'TASK-001',
+    });
+    handler?.({
+      type: 'agent:activity',
+      runId: 'run-1',
+      agentId: 'worker-TASK-002',
+      role: 'worker',
+      state: 'using-tool',
+      detail: 'Running tests',
+      taskId: 'TASK-002',
+    });
+    await tick();
+
+    await press(stdin, '\t');
+    await press(stdin, '\t');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Reviewing changes'));
+    expect(lastFrame()).toContain('Running tests');
   });
 });

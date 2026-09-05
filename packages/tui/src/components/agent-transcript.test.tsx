@@ -447,4 +447,93 @@ describe('AgentTranscript', () => {
     );
     expect(lastFrame() ?? '').toContain('09:05:03');
   });
+
+  it('attributes each row to its owning agent when an attribution map is given', () => {
+    const architectId = 'architect-run-1';
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'agent:activity',
+        runId,
+        agentId: architectId,
+        role: 'architect',
+        state: 'using-tool',
+        detail: 'Reviewing changes',
+        taskId: 'TASK-001',
+      },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'using-tool',
+        detail: 'Running tests',
+        taskId: 'TASK-002',
+      },
+    ];
+    const { lastFrame } = render(
+      <AgentTranscript
+        events={events}
+        agentIds={[architectId, agentId]}
+        agentLabel="Agent"
+        attribution={
+          new Map([
+            [architectId, { label: 'Architect', color: '#00eaff' }],
+            [agentId, { label: 'Worker 1', color: '#ff3d6c' }],
+          ])
+        }
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Architect');
+    expect(frame).toContain('Reviewing changes');
+    expect(frame).toContain('Worker 1');
+    expect(frame).toContain('Running tests');
+  });
+
+  it("does not collapse two different agents' identical-looking activity into one row", () => {
+    const architectId = 'architect-run-1';
+    // Same detail/tool/file/taskId on both events, differing only by which agent sent it — without
+    // agentId in the collapsing comparison, the second row would previously have been folded into
+    // the first as a "×2" repeat of the same agent's own activity.
+    const events: ArchMeshEvent[] = [
+      {
+        type: 'agent:activity',
+        runId,
+        agentId: architectId,
+        role: 'architect',
+        state: 'using-tool',
+        detail: 'Editing file',
+        file: 'src/shared.ts',
+        taskId: 'TASK-001',
+      },
+      {
+        type: 'agent:activity',
+        runId,
+        agentId,
+        role: 'worker',
+        state: 'using-tool',
+        detail: 'Editing file',
+        file: 'src/shared.ts',
+        taskId: 'TASK-001',
+      },
+    ];
+    const { lastFrame } = render(
+      <AgentTranscript
+        events={events}
+        agentIds={[architectId, agentId]}
+        agentLabel="Agent"
+        attribution={
+          new Map([
+            [architectId, { label: 'Architect', color: '#00eaff' }],
+            [agentId, { label: 'Worker 1', color: '#ff3d6c' }],
+          ])
+        }
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    // Both rows survive as their own line, neither shows a "×2" repeat suffix.
+    expect(frame).not.toContain('×2');
+    const lines = frame.split('\n').filter((line) => line.includes('Editing file'));
+    expect(lines).toHaveLength(2);
+  });
 });
