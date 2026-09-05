@@ -17,7 +17,6 @@ const run: RunMeta = {
 const config: AgentMeshConfig = {
   models: {
     architectModel: 'claude-opus-5',
-    tlModel: 'claude-sonnet-5',
     workerModel: 'claude-sonnet-5',
   },
   execution: {

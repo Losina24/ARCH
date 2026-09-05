@@ -12,6 +12,7 @@ import {
   getWorkingDiff,
   installWorktreeDependencies,
   loadRunSessions,
+  mergeDependencyBranches,
   mergeWorktree,
   removeWorktree,
   revertFiles,
@@ -20,9 +21,17 @@ import {
   scopesConflict,
   stagePaths,
   workerAgentId,
+  writeConsultationRequest,
   writeReviewRequest,
 } from '@losina/core';
-import type { AgentMeshConfig, RunMeta, RunSessions, Task, TasksIndex } from '@losina/schemas';
+import type {
+  AgentMeshConfig,
+  ConsultationFailureKind,
+  RunMeta,
+  RunSessions,
+  Task,
+  TasksIndex,
+} from '@losina/schemas';
 import {
   type CorrectionSource,
   type DispatchWorkerInput,
@@ -35,10 +44,19 @@ import {
   isInfraFailure,
 } from '@losina/validator';
 import { activityFromProgress } from './agent-progress.js';
+import { resolveDependencyBriefs } from './dependency-context.js';
 import type { Mutex } from './mutex.js';
 import { RunAbortedError } from './run-aborted-error.js';
 import { resolveTaskRepoRoot } from './task-repo-root.js';
+import { waitForConsultationOutcome } from './wait-for-consultation-outcome.js';
 import { waitForReviewOutcome } from './wait-for-review-outcome.js';
+
+/**
+ * Cap on how long a stuck-task consultation may keep the Architect busy before this task cycle
+ * gives up on it — a consultation is best-effort commentary, and must never delay a task's own
+ * finalization by more than a bounded amount.
+ */
+const CONSULTATION_TIMEOUT_MS = 120_000;
 
 /**
  * Cap for retrying just the automated checks (not the Worker) when a failure looks like an
@@ -170,6 +188,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
   };
 
   const taskMarkdown = await readFile(join(runDir, task.file), 'utf-8');
+  const dependencies = await resolveDependencyBriefs(tasksIndex, task, runDir);
   // Never seeded from a persisted session: the Worker is never resumed (see the dispatch call
   // below), so there would be nothing to resume even if one were on disk from an earlier run of
   // this daemon. Still tracked and persisted per dispatch purely for observability/debugging —
@@ -233,11 +252,111 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
     }
   };
 
+  let consultationSeq = 0;
+
+  /**
+   * The single place every escalation-to-human site (scope violation, failed checks, an infra
+   * blip that never recovered, a review rejected past the retry budget, or a crash) goes through.
+   * Order is load-bearing:
+   *  1. Best-effort consultation — swallowed entirely on any failure. A consultation must never
+   *     be able to change this task's outcome, only add a question to it.
+   *  2. Finalize exactly as every call site already did before this existed: persist the status,
+   *     revert this task's own files (only when actually failing, not when merely paused for a
+   *     human), release the worktree.
+   *  3. Only once the task is already terminal and its worktree released does the question (if
+   *     any) get surfaced — a human reacting to it calls retryTask, which requires both.
+   */
+  const escalateToHuman = async (
+    status: 'failed' | 'awaiting_human',
+    failureReason: string,
+    failureKind: ConsultationFailureKind,
+    context: { workerSummary?: string; gitDiff?: string } = {},
+  ): Promise<void> => {
+    let outcome: { question: string; recommendation: string } | undefined;
+    let seq: number | undefined;
+
+    if (!signal.aborted) {
+      try {
+        consultationSeq += 1;
+        seq = consultationSeq;
+        const consultationFilePath = join(runDir, 'tasks', `${task.id}.consultation.${seq}.json`);
+        const correctionMarkdowns = await Promise.all(
+          task.correctionFiles.map((file) => readFile(join(runDir, file), 'utf-8')),
+        );
+        const requestPath = await writeConsultationRequest(runDir, {
+          taskId: task.id,
+          seq,
+          model: config.models.architectModel,
+          consultationFilePath,
+          taskMarkdown,
+          correctionMarkdowns,
+          gitDiff: context.gitDiff ?? '',
+          workerSummary: context.workerSummary ?? '',
+          failureReason,
+          failureKind,
+          retriesSpent: task.retries,
+          maxRetries: config.execution.maxRetries,
+        });
+        bus.emit({ type: 'consultation:requested', runId, taskId: task.id, seq, requestPath });
+        outcome = await waitForConsultationOutcome({
+          bus,
+          runId,
+          taskId: task.id,
+          seq,
+          signal,
+          timeoutMs: CONSULTATION_TIMEOUT_MS,
+        });
+      } catch (consultationError) {
+        console.error(`[daemon] consultation failed for ${task.id}:`, consultationError);
+      }
+    }
+
+    await saveTasksIndex(tasksIndexPath, tasksIndex);
+    await setStatus(status, failureReason);
+    if (status === 'failed') {
+      try {
+        await revertOwnFiles();
+      } catch (revertError) {
+        console.error(
+          `[daemon] failed to revert ${task.id}'s own files after ${failureKind} escalation:`,
+          revertError,
+        );
+      }
+    }
+    await cleanupWorktree();
+    bus.emit({
+      type: 'agent:activity',
+      runId,
+      agentId,
+      role: 'worker',
+      taskId: task.id,
+      state: status === 'awaiting_human' ? 'idle-waiting' : 'failed',
+    });
+
+    if (outcome && seq !== undefined) {
+      bus.emit({
+        type: 'consultation:question-asked',
+        runId,
+        taskId: task.id,
+        seq,
+        question: outcome.question,
+        recommendation: outcome.recommendation,
+        failureReason,
+      });
+    }
+  };
+
   try {
     if (config.execution.useWorktrees) {
       const unlockCreate = await gitMutex.lock();
       try {
         worktree = await createWorktree(repoRoot, worktreesDir, task.id);
+        // Staying inside this same lock matters: it serializes against a concurrent
+        // dependency's own cleanupWorktree/deleteBranch, so "does feat/<depId> still exist"
+        // can't go stale between the check and the merge below.
+        if (task.dependsOn.length > 0) {
+          await mergeDependencyBranches(worktree, repoRoot, task.dependsOn);
+        }
       } finally {
         unlockCreate();
       }
@@ -281,6 +400,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
         correctionMarkdown,
         correctionSource,
         humanMessage: correctionMarkdown === undefined ? humanMessage : undefined,
+        dependencies,
         signal,
         detectChanges: config.execution.useWorktrees ? undefined : getChangedFiles,
         onProgress: (progress) =>
@@ -330,21 +450,12 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
           const scopeCorrection = `The following changed files are outside this task's declared scope (${task.scope.join(', ')}): ${violations.join(', ')}. Revert any changes outside your scope and only modify files within it.`;
           await persistCorrection(scopeCorrection);
           if (task.retries >= config.execution.maxRetries) {
-            await saveTasksIndex(tasksIndexPath, tasksIndex);
-            await setStatus(
+            await escalateToHuman(
               'failed',
               `Files changed outside the task's declared scope (${task.scope.join(', ')}): ${violations.join(', ')}.`,
+              'scope',
+              { workerSummary: dispatch.summary },
             );
-            await revertOwnFiles();
-            await cleanupWorktree();
-            bus.emit({
-              type: 'agent:activity',
-              runId,
-              agentId,
-              role: 'worker',
-              taskId: task.id,
-              state: 'failed',
-            });
             return;
           }
           task.retries += 1;
@@ -384,36 +495,18 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
         await persistCorrection(correctionText);
 
         if (isInfraFailure(validation)) {
-          await saveTasksIndex(tasksIndexPath, tasksIndex);
-          await setStatus(
+          await escalateToHuman(
             'failed',
             `Automated checks kept failing after ${MAX_INFRA_CHECK_RETRIES} retries with what looks like an infrastructure/environment issue, not a code problem:\n\n${correctionText}`,
+            'infra',
+            { workerSummary: dispatch.summary },
           );
-          await revertOwnFiles();
-          await cleanupWorktree();
-          bus.emit({
-            type: 'agent:activity',
-            runId,
-            agentId,
-            role: 'worker',
-            taskId: task.id,
-            state: 'failed',
-          });
           return;
         }
 
         if (task.retries >= config.execution.maxRetries) {
-          await saveTasksIndex(tasksIndexPath, tasksIndex);
-          await setStatus('failed', correctionText);
-          await revertOwnFiles();
-          await cleanupWorktree();
-          bus.emit({
-            type: 'agent:activity',
-            runId,
-            agentId,
-            role: 'worker',
-            taskId: task.id,
-            state: 'failed',
+          await escalateToHuman('failed', correctionText, 'checks', {
+            workerSummary: dispatch.summary,
           });
           return;
         }
@@ -462,6 +555,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
         correctionMarkdowns,
         gitDiff,
         workerSummary: dispatch.summary,
+        dependencyScopes: dependencies.flatMap((dependency) => dependency.scope),
       });
 
       bus.emit({ type: 'review:requested', runId, taskId: task.id, seq: reviewSeq, requestPath });
@@ -522,21 +616,12 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
 
       task.correctionFiles = [...task.correctionFiles, relative(runDir, correctionFilePath)];
       if (task.retries >= config.execution.maxRetries) {
-        await saveTasksIndex(tasksIndexPath, tasksIndex);
-        await setStatus(
+        await escalateToHuman(
           'failed',
           outcome.correctionMarkdown ?? 'Review rejected the task without further details.',
+          'review',
+          { workerSummary: dispatch.summary, gitDiff },
         );
-        await revertOwnFiles();
-        await cleanupWorktree();
-        bus.emit({
-          type: 'agent:activity',
-          runId,
-          agentId,
-          role: 'worker',
-          taskId: task.id,
-          state: 'failed',
-        });
         return;
       }
       task.retries += 1;
@@ -552,36 +637,17 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
     // Persist the failure and clean up the worktree before announcing it: a client reacting
     // to the activity event (e.g. reading the plan, or a test proceeding to teardown) must
     // never be able to observe a half-written tasks-index.yaml or a worktree whose
-    // `git worktree remove` is still racing the caller's next move.
+    // `git worktree remove` is still racing the caller's next move. escalateToHuman handles
+    // both — see its own doc comment for the full ordering rationale, including why
+    // revertOwnFiles only runs when truly abandoning the task (status 'failed'), not when
+    // merely pausing it for a human to resume in the same session.
     const needsHuman = isHumanInterventionNeeded(message);
-    if (needsHuman) {
-      await setStatus('awaiting_human', message);
-    } else {
-      await setStatus('failed', message);
-      // Only once the task is truly abandoned (not paused for a human to resume it in the
-      // same session) — otherwise whatever the worker wrote before crashing would vanish out
-      // from under a session it's meant to pick back up.
-      //
-      // This can itself throw (e.g. the same broken cwd that crashed the task in the first
-      // place also breaks `git status` here) — it must not escape and take down the whole
-      // implementation-phase loop for the run, leaving other in-flight tasks' status changes
-      // unreported and the RunManager thinking this run's loop is still alive indefinitely.
-      try {
-        await revertOwnFiles();
-      } catch (revertError) {
-        console.error(`[daemon] failed to revert ${task.id}'s own files after crash:`, revertError);
-      }
-    }
-    await cleanupWorktree();
-    bus.emit({
-      type: 'agent:activity',
-      runId,
-      agentId,
-      role: 'worker',
-      taskId: task.id,
-      state: needsHuman ? 'idle-waiting' : 'failed',
-    });
-    // setStatus() above already broadcast `message` as this task-status event's
+    await escalateToHuman(
+      needsHuman ? 'awaiting_human' : 'failed',
+      message,
+      needsHuman ? 'needs-human' : 'crash',
+    );
+    // escalateToHuman's setStatus already broadcast `message` as this task-status event's
     // failureReason, which the Console transcript renders in the status's own tone (red for
     // failed, blue for awaiting_human) — emitting it again as a plain agent:message would just
     // duplicate the same text a second time in white.

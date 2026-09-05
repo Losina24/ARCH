@@ -34,13 +34,36 @@ describe('loadConfig / saveConfig', () => {
     const custom: AgentMeshConfig = {
       models: {
         architectModel: 'claude-opus-5',
-        tlModel: 'claude-fable-5',
         workerModel: 'claude-haiku-4-5-20251001',
       },
       execution: { maxConcurrency: 8, maxRetries: 1, useWorktrees: true },
     };
     await saveConfig(cwd, custom);
     expect(await loadConfig(cwd)).toEqual(custom);
+  });
+
+  it('loads a config file written before the TL role was removed, dropping the leftover tlModel field', async () => {
+    const { configPath } = getArchPaths(cwd);
+    await mkdir(join(configPath, '..'), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        models: {
+          architectModel: 'claude-opus-5',
+          tlModel: 'claude-sonnet-5',
+          workerModel: 'claude-sonnet-5',
+        },
+        execution: { maxConcurrency: 4, maxRetries: 3, useWorktrees: true },
+      }),
+      'utf-8',
+    );
+
+    const loaded = await loadConfig(cwd);
+    expect(loaded.models).not.toHaveProperty('tlModel');
+    expect(loaded.models).toEqual({
+      architectModel: 'claude-opus-5',
+      workerModel: 'claude-sonnet-5',
+    });
   });
 
   it('creates the project directory under ~/.arch if it does not exist yet', async () => {
@@ -52,7 +75,7 @@ describe('loadConfig / saveConfig', () => {
 
   it('rejects saving a config that fails schema validation', async () => {
     const invalid = {
-      models: { architectModel: 'a', tlModel: 'b', workerModel: 'c' },
+      models: { architectModel: 'a', workerModel: 'c' },
       execution: { maxConcurrency: 0, maxRetries: 1, useWorktrees: true },
     } as AgentMeshConfig;
     await expect(saveConfig(cwd, invalid)).rejects.toThrow();

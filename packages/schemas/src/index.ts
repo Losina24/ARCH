@@ -8,3 +8,4 @@ export * from './worker-report.js';
 export * from './validation.js';
 export * from './review-request.js';
 export * from './review-response.js';
+export * from './consultation-request.js';

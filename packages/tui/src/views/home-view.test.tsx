@@ -8,7 +8,6 @@ import { HomeView } from './home-view.js';
 const config: AgentMeshConfig = {
   models: {
     architectModel: 'claude-opus-5',
-    tlModel: 'claude-sonnet-5',
     workerModel: 'claude-sonnet-5',
   },
   execution: {
@@ -124,7 +123,6 @@ describe('HomeView', () => {
       ...config,
       models: {
         architectModel: 'gpt-5.6-sol',
-        tlModel: 'gpt-5.6-terra',
         workerModel: 'gpt-5.6-luna',
       },
     };
@@ -144,7 +142,6 @@ describe('HomeView', () => {
 
     await vi.waitFor(() => expect(lastFrame()).toContain('gpt-5.6-sol'));
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('gpt-5.6-terra');
     expect(frame).toContain('gpt-5.6-luna');
     expect(frame).not.toContain('claude-opus-5');
   });
@@ -161,6 +158,51 @@ describe('HomeView', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('/runs');
     expect(frame).not.toContain('/settings');
+  });
+
+  it('moves the command-menu highlight with the arrow keys instead of scrolling or typing', async () => {
+    const client = mockClient();
+    const { lastFrame, stdin } = render(
+      <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
+    );
+
+    await tick();
+    await type(stdin, '/');
+    // HOME_COMMANDS order: runs, settings, help, quit, close-all — two downs lands on "help".
+    await press(stdin, '\x1b[B');
+    await press(stdin, '\x1b[B');
+
+    const lines = (lastFrame() ?? '').split('\n');
+    const cursorLine = lines.find((line) => line.includes('❯'));
+    expect(cursorLine).toContain('/help');
+  });
+
+  it('fills the input with the highlighted command on Tab, without running it', async () => {
+    const client = mockClient();
+    const { lastFrame, stdin } = render(
+      <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
+    );
+
+    await tick();
+    await type(stdin, '/');
+    await press(stdin, '\x1b[B'); // highlight "settings"
+    await press(stdin, '\t');
+
+    expect(lastFrame()).not.toContain('Settings');
+    expect(lastFrame()).toContain('/settings');
+  });
+
+  it('runs the highlighted command on Enter even when the typed text is only a prefix', async () => {
+    const client = mockClient();
+    const { lastFrame, stdin } = render(
+      <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
+    await type(stdin, '/se');
+    await press(stdin, '\r');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('Settings'));
   });
 
   it('lists runs via /runs and opens the selected one', async () => {
@@ -296,7 +338,7 @@ describe('HomeView', () => {
     expect(lastFrame()).toContain('Describe your task and give instructions');
   });
 
-  it('shows the models hint with the configured Architect/TL/Worker models', async () => {
+  it('shows the models hint with the configured Architect/Worker models', async () => {
     const client = mockClient();
     const { lastFrame } = render(
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
@@ -304,7 +346,6 @@ describe('HomeView', () => {
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Architect'));
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('TL');
     expect(frame).toContain('Worker');
     expect(frame).toContain('claude-opus-5');
     expect(frame).toContain('claude-sonnet-5');

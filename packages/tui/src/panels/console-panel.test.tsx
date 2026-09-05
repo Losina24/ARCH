@@ -12,13 +12,12 @@ const panelProps = {
 };
 
 describe('ConsolePanel', () => {
-  it('shows the Architect and TL agents even with no activity yet', () => {
+  it('shows the Architect agent even with no activity yet', () => {
     const { lastFrame } = render(
       <ConsolePanel events={[]} selectedAgentId={null} {...panelProps} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Architect');
-    expect(frame).toContain('TL');
   });
 
   it('lists a worker agent and its status once it has activity', () => {
@@ -71,8 +70,8 @@ describe('ConsolePanel', () => {
       {
         type: 'agent:activity',
         runId: 'run-1',
-        agentId: 'tl-run-1',
-        role: 'tl',
+        agentId: 'architect-run-1',
+        role: 'architect',
         state: 'thinking',
       },
       {
@@ -91,12 +90,12 @@ describe('ConsolePanel', () => {
       ).lastFrame() ?? '';
     expect(workerFrame).toContain('sent prompt · TASK-001');
 
-    const tlFrame =
+    const architectFrame =
       render(
-        <ConsolePanel events={events} selectedAgentId="tl-run-1" {...panelProps} />,
+        <ConsolePanel events={events} selectedAgentId="architect-run-1" {...panelProps} />,
       ).lastFrame() ?? '';
-    expect(tlFrame).not.toContain('sent prompt · TASK-001');
-    expect(tlFrame).toContain('sent prompt');
+    expect(architectFrame).not.toContain('sent prompt · TASK-001');
+    expect(architectFrame).toContain('sent prompt');
   });
 
   it('never renders the internal prompt text, only that a prompt was sent', () => {

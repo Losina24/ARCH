@@ -1,6 +1,6 @@
 {
   "name": "@losina/architect",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Architect agent for ARCH: turns a prompt into a plan and reviews task diffs.",
   "license": "MIT",
   "type": "module",

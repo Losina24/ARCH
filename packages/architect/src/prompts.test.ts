@@ -1,6 +1,11 @@
 import type { RunMeta } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
-import { buildPlanPrompt, buildRefinePlanPrompt, buildReviewPrompt } from './prompts.js';
+import {
+  buildConsultationPrompt,
+  buildPlanPrompt,
+  buildRefinePlanPrompt,
+  buildReviewPrompt,
+} from './prompts.js';
 
 const run: RunMeta = {
   runId: 'run-1',
@@ -46,6 +51,19 @@ describe('buildPlanPrompt', () => {
     expect(prompt).toContain('/workspace/service-a');
     expect(prompt).toContain('/workspace/service-b');
   });
+
+  it('instructs the architect to sequence a shared contract task before its consumers', () => {
+    const prompt = buildPlanPrompt(planInput);
+    expect(prompt).toContain('shared surface');
+    expect(prompt).toContain('"dependsOn: []"');
+    expect(prompt).toContain('does not own it');
+  });
+
+  it('still gives the existing dependsOn/scope decomposition guidance', () => {
+    const prompt = buildPlanPrompt(planInput);
+    expect(prompt).toContain('Every "id" must be unique');
+    expect(prompt).toContain('Keep scopes disjoint between tasks');
+  });
 });
 
 describe('buildRefinePlanPrompt', () => {
@@ -59,6 +77,18 @@ describe('buildRefinePlanPrompt', () => {
     const prompt = buildRefinePlanPrompt({ ...planInput, feedback: 'feedback' });
     expect(prompt).toContain('Keep the ids of tasks that are still valid');
     expect(prompt).toContain('unchanged (so any existing references keep working)');
+  });
+
+  // Regression guard: buildRefinePlanPrompt used to dump the tasks-index schema without any of
+  // the decomposition guidelines that come with it in buildPlanPrompt, silently losing this
+  // guidance (including contract-first sequencing) the moment a plan got refined.
+  it('still carries the contract-first and dependsOn/scope decomposition guidance', () => {
+    const prompt = buildRefinePlanPrompt({ ...planInput, feedback: 'feedback' });
+    expect(prompt).toContain('shared surface');
+    expect(prompt).toContain('"dependsOn: []"');
+    expect(prompt).toContain('does not own it');
+    expect(prompt).toContain('Every "id" must be unique');
+    expect(prompt).toContain('Keep scopes disjoint between tasks');
   });
 });
 
@@ -122,5 +152,94 @@ describe('buildReviewPrompt', () => {
       workerSummary: '',
     });
     expect(prompt).toContain('(the worker left no explanation)');
+  });
+
+  it('says nothing about dependency scopes when there are none', () => {
+    const prompt = buildReviewPrompt({
+      taskId,
+      taskMarkdown: '# Task brief',
+      correctionMarkdowns: [],
+      gitDiff: 'diff',
+      correctionFilePath: '/tmp/project/correction.md',
+      workerSummary: 'done',
+    });
+    expect(prompt).not.toContain('own these paths');
+  });
+
+  it('warns the reviewer when the diff might touch a dependency-owned path', () => {
+    const prompt = buildReviewPrompt({
+      taskId,
+      taskMarkdown: '# Task brief',
+      correctionMarkdowns: [],
+      gitDiff: 'diff',
+      correctionFilePath: '/tmp/project/correction.md',
+      workerSummary: 'done',
+      dependencyScopes: ['src/job.ts'],
+    });
+    expect(prompt).toContain('own these paths');
+    expect(prompt).toContain('src/job.ts');
+    expect(prompt).toContain('that is a defect — request a correction');
+  });
+});
+
+describe('buildConsultationPrompt', () => {
+  const consultationInput = {
+    taskId,
+    taskMarkdown: '# Task brief',
+    correctionMarkdowns: [],
+    gitDiff: 'diff --git a/src/index.js b/src/index.js',
+    workerSummary: 'Implemented add(a, b) in src/index.js.',
+    failureReason: 'Automated checks kept failing after 3 retries.',
+    failureKind: 'checks' as const,
+    retriesSpent: 3,
+    maxRetries: 3,
+    consultationFilePath:
+      '/home/user/.arch/projects/project-abc12345/runs/run-1/tasks/TASK-001.consultation.1.json',
+  };
+
+  it('names the stuck task, the failure classification/budget, and the consultation file path, ending with the CONSULTATION_READY sentinel', () => {
+    const prompt = buildConsultationPrompt(consultationInput);
+
+    expect(prompt).toContain('Stuck task: TASK-001');
+    expect(prompt).toContain('# Task brief');
+    expect(prompt).toContain('Automated checks kept failing after 3 retries.');
+    expect(prompt).toContain('checks, after 3/3 correction attempts');
+    expect(prompt).toContain(consultationInput.consultationFilePath);
+    expect(prompt.trim().endsWith('CONSULTATION_READY')).toBe(true);
+  });
+
+  it('lists prior correction rounds in order when present', () => {
+    const prompt = buildConsultationPrompt({
+      ...consultationInput,
+      correctionMarkdowns: ['fix the edge case', 'also add a docstring'],
+    });
+
+    expect(prompt).toContain('Prior correction rounds');
+    const first = prompt.indexOf('fix the edge case');
+    const second = prompt.indexOf('also add a docstring');
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(second).toBeGreaterThan(first);
+  });
+
+  it('falls back to placeholders when the diff and worker summary are empty', () => {
+    const prompt = buildConsultationPrompt({
+      ...consultationInput,
+      gitDiff: '',
+      workerSummary: '',
+    });
+    expect(prompt).toContain('(no changes were staged)');
+    expect(prompt).toContain('(the worker left no explanation)');
+  });
+
+  it('instructs the Architect that the reply is relayed verbatim, never rewritten', () => {
+    const prompt = buildConsultationPrompt(consultationInput);
+    expect(prompt).toContain('passed VERBATIM to the Worker');
+  });
+
+  it('never mentions the unrelated dispatch markers other prompt kinds key off of', () => {
+    const prompt = buildConsultationPrompt(consultationInput);
+    expect(prompt).not.toContain('GRILLING_DONE');
+    expect(prompt).not.toContain('Definition phase');
+    expect(prompt).not.toContain('semantic review');
   });
 });

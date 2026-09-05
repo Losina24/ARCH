@@ -85,10 +85,9 @@ function architectStatus(
 const MODEL_ROLES: Array<{
   label: string;
   role: AgentRole;
-  field: 'architectModel' | 'tlModel' | 'workerModel';
+  field: 'architectModel' | 'workerModel';
 }> = [
   { label: 'Architect', role: 'architect', field: 'architectModel' },
-  { label: 'TL', role: 'tl', field: 'tlModel' },
   { label: 'Worker', role: 'worker', field: 'workerModel' },
 ];
 

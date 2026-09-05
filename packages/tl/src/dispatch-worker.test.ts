@@ -122,7 +122,8 @@ describe('dispatchWorker', () => {
     });
 
     const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
-    expect(call?.prompt).toContain('The Team Lead ran');
+    expect(call?.prompt).toContain("This task's automated checks were run");
+    expect(call?.prompt).not.toContain('Team Lead');
   });
 
   it('embeds humanMessage in the prompt on a fresh dispatch', async () => {
@@ -155,5 +156,24 @@ describe('dispatchWorker', () => {
 
     const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
     expect(call?.prompt).toContain('- build: pnpm --filter some-app build');
+  });
+
+  it('passes the dependency briefs into the prompt so the worker reuses their contract', async () => {
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-6', output: 'Done.' });
+
+    await dispatchWorker({
+      task,
+      taskMarkdown: '# Task brief',
+      worktree,
+      model: 'sonnet',
+      dependencies: [
+        { id: 'TASK-000', title: 'Define the shared Job type', scope: ['src/job.ts'] },
+      ],
+    });
+
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
+    expect(call?.prompt).toContain('TASK-000');
+    expect(call?.prompt).toContain('Define the shared Job type');
+    expect(call?.prompt).toContain('src/job.ts');
   });
 });

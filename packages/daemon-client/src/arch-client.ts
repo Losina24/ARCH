@@ -8,6 +8,7 @@ import type {
   RunApproveRequest,
   RunCreateRequest,
   RunDeleteRequest,
+  RunDismissConsultationRequest,
   RunGetEventsRequest,
   RunGetPlanRequest,
   RunGetRequest,
@@ -61,6 +62,10 @@ export class ArchClient {
 
   answerGrillingQuestion(payload: RunAnswerGrillingQuestionRequest): Promise<RunMeta> {
     return this.rpc.request('run.answerGrillingQuestion', payload);
+  }
+
+  dismissConsultation(payload: RunDismissConsultationRequest): Promise<RunMeta> {
+    return this.rpc.request('run.dismissConsultation', payload);
   }
 
   getRunPlan(payload: RunGetPlanRequest): Promise<RunPlan | null> {

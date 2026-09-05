@@ -11,6 +11,7 @@ import type {
   RunApproveRequest,
   RunCreateRequest,
   RunDeleteRequest,
+  RunDismissConsultationRequest,
   RunGetEventsRequest,
   RunGetPlanRequest,
   RunGetRequest,
@@ -110,6 +111,21 @@ async function retryTask(
   if (!target) throw new Error(`Task not found: ${taskId}`);
   if (target.status !== 'failed' && target.status !== 'awaiting_human') {
     throw new Error(`Task ${taskId} is not failed — nothing to retry`);
+  }
+
+  // A human resolving this task via retryTask also answers any consultation question the
+  // Architect asked about it — the reply is this same message, relayed verbatim (see
+  // escalateToHuman in tl-loop.ts). No-op when there was no pending question.
+  const pendingConsultationSeq = runManager.takePendingConsultation(runId, taskId);
+  if (pendingConsultationSeq !== undefined) {
+    handle.broadcast({
+      type: 'consultation:answered',
+      runId,
+      taskId: target.id,
+      seq: pendingConsultationSeq,
+      answer: message,
+      skipped: false,
+    });
   }
 
   // Delete the physical correction files before forgetting them: a later attempt recomputes
@@ -405,6 +421,24 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
             skipped: Boolean(skip),
           });
           triggerGrillingPhase(runId, skip ? { skipped: true } : { text: answer ?? '' });
+          return run;
+        }
+        case 'run.dismissConsultation': {
+          const { runId, taskId } = payload as RunDismissConsultationRequest;
+          const run = runManager.get(runId);
+          if (!run) throw new Error(`Run not found: ${runId}`);
+          const seq = runManager.takePendingConsultation(runId, taskId);
+          if (seq !== undefined) {
+            handle.broadcast({
+              type: 'consultation:answered',
+              runId,
+              taskId,
+              seq,
+              skipped: true,
+            });
+          }
+          // No task-status mutation — dismissing only clears the question. The task stays
+          // failed/awaiting_human, still retryable later via run.retryTask.
           return run;
         }
         case 'run.refine': {

@@ -8,11 +8,9 @@ import {
   saveTasksIndex,
   selectDispatchableTaskIds,
 } from '@losina/core';
-import type { AgentActivityState } from '@losina/ipc';
 import type { AgentMeshConfig, Task } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import type { DaemonServerHandle } from '../server.js';
-import { createActivityDeduper } from './activity-dedupe.js';
 import { startArchitectLoop } from './architect-loop.js';
 import { cascadeBlockDependentTasks } from './cascade-block.js';
 import { Mutex } from './mutex.js';
@@ -46,27 +44,25 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
   const gitMutex = new Mutex();
   const inFlight = new Map<string, Promise<void>>();
   const inFlightTasks = new Map<string, Task>();
-  const tlAgentId = `tl-${runId}`;
   const humanMessages = new Map<string, string>();
   if (retryTaskId && retryMessage !== undefined) {
     humanMessages.set(retryTaskId, retryMessage);
   }
 
-  // Internal pub/sub between the TL and Architect loops, in addition to the
+  // Internal pub/sub between the task cycles and the Architect loop, in addition to the
   // socket broadcast to TUI clients: every event that reaches the bus is
-  // also forwarded to connected clients, so TL/Architect coordination and
+  // also forwarded to connected clients, so cycle/Architect coordination and
   // UI visibility stay driven by the same single stream.
   const bus = new RunEventBus();
   const unsubscribeForwarding = bus.subscribe((event) => handle.broadcast(event));
+  // Recorded here (rather than read back off the persisted event log) so retryTask can look up
+  // the right seq synchronously when a human's reply arrives — see RunManager.pendingConsultations.
+  const unsubscribeConsultations = bus.subscribe((event) => {
+    if (event.type === 'consultation:question-asked' && event.runId === runId) {
+      runManager.setPendingConsultation(runId, event.taskId, event.seq);
+    }
+  });
   const architectLoop = startArchitectLoop({ run, runDir, config, bus, signal });
-
-  const tlActivityChanged = createActivityDeduper();
-  const emitTlActivity = (state: AgentActivityState, taskId?: string) => {
-    if (!tlActivityChanged(state, taskId)) return;
-    bus.emit({ type: 'agent:activity', runId, agentId: tlAgentId, role: 'tl', taskId, state });
-  };
-
-  emitTlActivity('thinking');
 
   // Applies a retry queued via RunManager.queueRetry (a task individually stuck while its
   // siblings are still in flight) directly to this loop's own in-memory tasks-index. Mutating a
@@ -138,7 +134,6 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
         task.status = 'ready';
         await saveTasksIndex(tasksIndexPath, tasksIndex);
         bus.emit({ type: 'task:status-changed', runId, taskId, status: 'ready' });
-        emitTlActivity('thinking', taskId);
 
         inFlightTasks.set(taskId, task);
         const cycle = runTlTaskCycle({
@@ -169,16 +164,12 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
       );
       if (allTerminal && inFlight.size === 0) break;
 
-      emitTlActivity('idle-waiting');
-
       if (inFlight.size > 0) {
         await Promise.race([...inFlight.values(), delay(POLL_INTERVAL_MS)]);
       } else {
         await delay(POLL_INTERVAL_MS);
       }
     }
-
-    emitTlActivity('completed');
 
     const hasFailedTasks = tasksIndex.tasks.some(
       (task) => task.status === 'failed' || task.status === 'awaiting_human',
@@ -208,5 +199,6 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
   } finally {
     await architectLoop.stop();
     unsubscribeForwarding();
+    unsubscribeConsultations();
   }
 }
