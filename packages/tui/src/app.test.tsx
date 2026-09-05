@@ -48,7 +48,6 @@ describe('App', () => {
       getConfig: vi.fn().mockResolvedValue({
         models: {
           architectModel: 'claude-opus-5',
-          tlModel: 'claude-sonnet-5',
           workerModel: 'claude-sonnet-5',
         },
         execution: { maxConcurrency: 4, maxRetries: 3, useWorktrees: true },
@@ -81,7 +80,6 @@ describe('App', () => {
       getConfig: vi.fn().mockResolvedValue({
         models: {
           architectModel: 'claude-opus-5',
-          tlModel: 'claude-sonnet-5',
           workerModel: 'claude-sonnet-5',
         },
         execution: { maxConcurrency: 4, maxRetries: 3, useWorktrees: true },

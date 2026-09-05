@@ -13,8 +13,13 @@ const valid = {
 };
 
 describe('ReviewRequestSchema', () => {
-  it('parses a valid review request', () => {
-    expect(ReviewRequestSchema.parse(valid)).toEqual(valid);
+  it('parses a valid review request, defaulting dependencyScopes to []', () => {
+    expect(ReviewRequestSchema.parse(valid)).toEqual({ ...valid, dependencyScopes: [] });
+  });
+
+  it('keeps an explicit dependencyScopes', () => {
+    const withScopes = { ...valid, dependencyScopes: ['src/job.ts'] };
+    expect(ReviewRequestSchema.parse(withScopes)).toEqual(withScopes);
   });
 
   it('rejects a non-positive seq', () => {

@@ -1,6 +1,6 @@
 {
   "name": "@losina/arch-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "archctl — the ARCH orchestration CLI.",
   "license": "MIT",
   "type": "module",

@@ -26,10 +26,16 @@ export type WorkerHandler = (
   options: RunHeadlessOptions,
   // biome-ignore lint/suspicious/noConfusingVoidType: sync/async handlers may legitimately return nothing
 ) => Promise<string | undefined> | void | string;
-export type ReviewVerdictSpec = 'approve' | { correctionMarkdown: string };
+
+export type ReviewVerdictSpec =
+  | 'approve'
+  | { correctionMarkdown: string }
+  /** Simulates the review call itself crashing (e.g. a spawn-time failure) instead of
+   * producing a verdict — reproduces how a real `reviewTask` failure reaches `architect-loop.ts`'s
+   * catch block, for tests that assert on how that failure is reported. */
+  | { crash: string };
 export type ConsultationVerdictSpec =
   | { question: string; recommendation: string }
-  | { crash: string };
 
 // Paths embedded in real prompts come from `path.join`, so on Windows they're
 // backslash-separated (e.g. "...\runs\<id>\project.md") rather than the POSIX form.
@@ -38,6 +44,11 @@ const REVIEW_TASK_ID_PATTERN = /implementing task\s+"([^"]+)"/;
 const CORRECTION_FILE_PATTERN = /exactly this path: "([^"]+)"/;
 const CONSULTATION_TASK_ID_PATTERN = /Stuck task: (\S+)/;
 const CONSULTATION_FILE_PATTERN = /Write your question to exactly this path: "([^"]+)"/;
+
+// Matches buildWorkerPrompt's own self-identification line — tried before the cwd/prompt-scan
+// fallback in resolveWorkerTaskId. Deliberately distinct wording from REVIEW_TASK_ID_PATTERN so
+// the two never collide.
+const WORKER_TASK_ID_PATTERN = /Task under implementation: (\S+)/;
 
 function extractRunId(prompt: string): string {
   const match = RUN_ID_PATTERN.exec(prompt);
@@ -79,6 +90,7 @@ export class FakeClaudeRuntime {
   private readonly consultationQueues = new Map<string, ConsultationVerdictSpec[]>();
   private readonly consultationCalls = new Map<string, number>();
   private readonly consultationPrompts = new Map<string, string>();
+  private readonly workerPrompts = new Map<string, string>();
 
   queuePlan(spec: PlanSpec): void {
     this.planQueue.push(spec);
@@ -86,6 +98,10 @@ export class FakeClaudeRuntime {
 
   lastReviewPrompt(taskId: string): string | undefined {
     return this.reviewPrompts.get(taskId);
+  }
+
+  lastWorkerPrompt(taskId: string): string | undefined {
+    return this.workerPrompts.get(taskId);
   }
 
   queueWorker(taskId: string, handler: WorkerHandler): void {
@@ -181,6 +197,9 @@ export class FakeClaudeRuntime {
   }
 
   private resolveWorkerTaskId(options: RunHeadlessOptions): string {
+    const marker = WORKER_TASK_ID_PATTERN.exec(options.prompt);
+    if (marker) return marker[1];
+
     const cwdTaskId = basename(options.cwd);
     if (this.workerQueues.has(cwdTaskId)) return cwdTaskId;
 
@@ -192,6 +211,7 @@ export class FakeClaudeRuntime {
 
   private async runWorker(options: RunHeadlessOptions): Promise<string> {
     const taskId = this.resolveWorkerTaskId(options);
+    this.workerPrompts.set(taskId, options.prompt);
     this.workerCalls.set(taskId, (this.workerCalls.get(taskId) ?? 0) + 1);
 
     const handler = this.workerQueues.get(taskId)?.shift();
@@ -204,6 +224,7 @@ export class FakeClaudeRuntime {
     this.reviewPrompts.set(taskId, options.prompt);
     const verdict = this.reviewQueues.get(taskId)?.shift() ?? 'approve';
     if (verdict === 'approve') return 'APPROVED';
+    if ('crash' in verdict) throw new Error(verdict.crash);
 
     // correctionFilePath is already an absolute path under the run's archDir (see
     // review-task.ts) — the real Claude CLI writes there directly, so this must too instead
