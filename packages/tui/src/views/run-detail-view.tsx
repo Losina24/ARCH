@@ -12,6 +12,7 @@ import { ScrollBox, type ScrollMetrics } from '../components/scroll-box.js';
 import { StatusBar } from '../components/status-bar.js';
 import { useTerminalColumns } from '../hooks/use-terminal-columns.js';
 import { useTerminalRows } from '../hooks/use-terminal-rows.js';
+import { AgentsPanel } from '../panels/agents-panel.js';
 import {
   ArchitectConversationInput,
   type ConversationMode,
@@ -24,12 +25,13 @@ import { PlanificationPanel } from '../panels/planification-panel.js';
 import { TaskDetailPanel } from '../panels/task-detail-panel.js';
 import { ERROR, INACTIVE, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
 
-const TABS = ['planification', 'overview', 'console'] as const;
+const TABS = ['planification', 'overview', 'agents', 'console'] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   planification: 'Overview',
   overview: 'Monitor',
+  agents: 'Agents',
   console: 'Console',
 };
 
@@ -641,7 +643,8 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       : tab;
   const shouldFollowScrollTail =
     (liveOpenTask !== null && taskConsoleExpanded) ||
-    (liveOpenTask === null && tab === 'console' && consoleDisplayedAgentId !== null);
+    (liveOpenTask === null && tab === 'console' && consoleDisplayedAgentId !== null) ||
+    (liveOpenTask === null && tab === 'agents');
 
   const reportScrollMetrics = (metrics: ScrollMetrics) => {
     const normalized = {
@@ -976,6 +979,15 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
             scrollOffset={scrollOffset}
             onScrollMetrics={reportScrollMetrics}
             selectedTaskId={taskSelectMode ? (selectedTask?.id ?? null) : null}
+          />
+        ) : tab === 'agents' ? (
+          <AgentsPanel
+            events={events}
+            eventTimestamps={eventTimestamps}
+            width={width}
+            height={bodyHeight}
+            scrollOffset={scrollOffset}
+            onScrollMetrics={reportScrollMetrics}
           />
         ) : (
           <ConsolePanel
