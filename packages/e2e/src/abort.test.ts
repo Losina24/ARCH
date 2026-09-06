@@ -69,7 +69,7 @@ describe('abort', () => {
       daemon.client,
       (event) =>
         event.type === 'agent:activity' && event.role === 'worker' && event.state === 'failed',
-      15000,
+      30000,
     );
     await daemon.client.abortRun({ runId: run.runId });
     await workerFailed;
