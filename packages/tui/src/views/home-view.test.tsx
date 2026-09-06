@@ -24,9 +24,20 @@ function tick(): Promise<void> {
 // vi.waitFor's own default timeout is 1000ms, which is tight enough that these
 // screen-transition assertions have failed intermittently on GitHub Actions' slower/more
 // contended runners even though they pass reliably (and fast) locally. Give them more room.
+//
+// This inner budget must stay below vitest's own per-test timeout (see the `vi.setConfig` call
+// below) — otherwise the outer test timeout fires first (since it starts counting from the test's
+// start, before this helper is even called) and this 5s budget never actually gets a chance to run
+// out on its own terms.
+const WAIT_FOR_TIMEOUT_MS = 5000;
 function waitFor(assertion: () => void): Promise<void> {
-  return vi.waitFor(assertion, { timeout: 5000 });
+  return vi.waitFor(assertion, { timeout: WAIT_FOR_TIMEOUT_MS });
 }
+
+// Must exceed WAIT_FOR_TIMEOUT_MS with real margin — vitest's own default testTimeout is also
+// 5000ms, which raced the helper above and always won, so `waitFor` was never actually getting the
+// 5 seconds it was supposed to.
+vi.setConfig({ testTimeout: WAIT_FOR_TIMEOUT_MS + 5000 });
 
 async function press(stdin: Stdin, sequence: string): Promise<void> {
   stdin.write(sequence);
