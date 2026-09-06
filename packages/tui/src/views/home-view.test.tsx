@@ -51,6 +51,7 @@ function mockClient(overrides: Partial<ArchClient> = {}): ArchClient {
     createRun: vi.fn(),
     getConfig: vi.fn().mockResolvedValue(config),
     deleteRun: vi.fn().mockResolvedValue({ ok: true }),
+    onEvent: vi.fn().mockReturnValue(vi.fn()),
     ...overrides,
   } as unknown as ArchClient;
 }
@@ -67,6 +68,39 @@ describe('HomeView', () => {
     expect(frame).toContain('█');
     expect(frame).toContain('Describe your task and give instructions');
     expect(frame).toContain('/tmp/project');
+  });
+
+  it('shows non-terminated runs in a top bar on the splash screen', async () => {
+    const runs = [
+      runMeta({ runId: 'run-1', title: 'Add login page', phase: 'implementation' }),
+      runMeta({ runId: 'run-2', title: 'Fix flaky test', phase: 'done' }),
+      runMeta({ runId: 'run-3', title: 'Refactor auth', phase: 'blocked' }),
+    ];
+    const client = mockClient({ listRuns: vi.fn().mockResolvedValue(runs) });
+    const { lastFrame } = render(
+      <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
+    );
+
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('[implementation] Add login page');
+      expect(frame).not.toContain('Fix flaky test');
+      expect(frame).not.toContain('Refactor auth');
+    });
+  });
+
+  it('renders no top bar on the splash screen when every run is done or blocked', async () => {
+    const runs = [runMeta({ runId: 'run-1', title: 'Add login page', phase: 'done' })];
+    const client = mockClient({ listRuns: vi.fn().mockResolvedValue(runs) });
+    const { lastFrame } = render(
+      <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
+    );
+
+    await tick();
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('Describe your task and give instructions');
+    });
+    expect(lastFrame()).not.toContain('[done] Add login page');
   });
 
   it('treats typed text as a new run and opens it once created', async () => {

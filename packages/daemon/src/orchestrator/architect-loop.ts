@@ -184,6 +184,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           model: request.model,
           correctionFilePath: request.correctionFilePath,
           workerSummary: request.workerSummary,
+          dependencyScopes: request.dependencyScopes,
           resumeSessionId: sessionId,
           signal,
           onProgress,
@@ -223,6 +224,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           role: 'architect',
           taskId: event.taskId,
           state: 'failed',
+          detail: summarizeActivityFailure(error),
         });
       },
     });

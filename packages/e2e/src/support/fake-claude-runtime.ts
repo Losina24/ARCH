@@ -36,6 +36,8 @@ export type ReviewVerdictSpec =
   | { crash: string };
 export type ConsultationVerdictSpec =
   | { question: string; recommendation: string }
+  /** Simulates the consultation call itself crashing, same as `ReviewVerdictSpec`'s `crash`. */
+  | { crash: string };
 
 // Paths embedded in real prompts come from `path.join`, so on Windows they're
 // backslash-separated (e.g. "...\runs\<id>\project.md") rather than the POSIX form.

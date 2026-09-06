@@ -3,6 +3,7 @@ import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
 import { Box, Text, useInput } from 'ink';
 import { useEffect, useState } from 'react';
 import { matchHomeCommands, parseHomeInput } from '../commands.js';
+import { ActiveRunsBar } from '../components/active-runs-bar.js';
 import { CommandSuggestions } from '../components/command-suggestions.js';
 import { HelpModal } from '../components/help-modal.js';
 import { Logo } from '../components/logo.js';
@@ -69,6 +70,15 @@ export function HomeView({
       .getConfig()
       .then(setConfig)
       .catch(() => {});
+  }, [client]);
+
+  useEffect(() => {
+    return client.onEvent((event) => {
+      if (event.type !== 'run:status-changed') return;
+      setRuns((previous) =>
+        previous.map((run) => (run.runId === event.runId ? { ...run, phase: event.phase } : run)),
+      );
+    });
   }, [client]);
 
   const updateInput = (value: string) => {
@@ -227,11 +237,18 @@ export function HomeView({
             ? ['y confirm', 'n cancel']
             : ['type to filter', '↑/↓ select', 'enter open', 'ctrl+d delete', 'esc back'];
 
-  const contentRows = Math.max(0, rows - 1);
+  const activeRuns = runs.filter(
+    (run) => run.phase !== 'done' && run.phase !== 'blocked',
+  );
+  // Only on the splash screen — the runs screen already lists every run (with its phase), so
+  // the bar there would just duplicate what's already on screen.
+  const showActiveRunsBar = screen === 'splash' && activeRuns.length > 0;
+  const contentRows = Math.max(0, rows - 1 - (showActiveRunsBar ? 1 : 0));
   const dimSplash = helpOpen || settingsOpen;
 
   return (
     <Box flexDirection="column" height={rows}>
+      {showActiveRunsBar && <ActiveRunsBar runs={activeRuns} width={columns} />}
       <Box flexGrow={1} position="relative">
         <Box
           width={columns}

@@ -52,6 +52,7 @@ describe('App', () => {
         },
         execution: { maxConcurrency: 4, maxRetries: 3, useWorktrees: true },
       }),
+      onEvent: vi.fn().mockReturnValue(vi.fn()),
     } as unknown as ArchClient;
     mockedEnsureDaemon.mockResolvedValue(client);
     const { lastFrame } = render(<App cwd="/tmp/project" />);
