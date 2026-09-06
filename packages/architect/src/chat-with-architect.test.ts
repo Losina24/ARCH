@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runAgentHeadless } from '@losina/agent-runtime';
-import type { RunMeta } from '@losina/schemas';
+import type { RunMeta, RunPlan } from '@losina/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chatWithArchitect } from './chat-with-architect.js';
 import { fileExists } from './util/file-exists.js';
@@ -14,13 +14,13 @@ const mockedRunAgentHeadless = vi.mocked(runAgentHeadless);
 describe('chatWithArchitect', () => {
   let cwd: string;
   let runDir: string;
-  let runRequestFilePath: string;
+  let newTasksFilePath: string;
   let run: RunMeta;
 
   beforeEach(async () => {
     cwd = await mkdtemp(join(tmpdir(), 'arch-chat-test-'));
     runDir = await mkdtemp(join(tmpdir(), 'arch-chat-rundir-'));
-    runRequestFilePath = join(runDir, 'chat-run-request.json');
+    newTasksFilePath = join(runDir, 'chat-new-tasks.json');
     run = {
       runId: 'run-1',
       title: 'Add add(a, b)',
@@ -41,12 +41,12 @@ describe('chatWithArchitect', () => {
   const baseInput = () => ({
     run,
     runDir,
-    plan: null,
+    plan: null as RunPlan | null,
     message: 'How is it going?',
     model: 'sonnet',
   });
 
-  it('returns just the reply when the agent writes no run-request file', async () => {
+  it('returns just the reply when the agent writes no new-tasks file', async () => {
     mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-1', output: 'All good.' });
 
     const result = await chatWithArchitect(baseInput());
@@ -54,27 +54,47 @@ describe('chatWithArchitect', () => {
     expect(result).toEqual({ sessionId: 'session-1', reply: 'All good.' });
   });
 
-  it('returns the parsed run-request prompt when the agent writes the file, and deletes it after', async () => {
+  it('returns the parsed new tasks when the agent writes the manifest, and deletes it after', async () => {
     mockedRunAgentHeadless.mockImplementation(async () => {
       await writeFile(
-        runRequestFilePath,
-        JSON.stringify({ prompt: 'Add a subtract(a, b) function too.' }),
+        newTasksFilePath,
+        JSON.stringify({
+          tasks: [
+            {
+              id: 'TASK-002',
+              title: 'Add subtract(a, b)',
+              dependsOn: [],
+              file: 'tasks/TASK-002.md',
+              checks: [],
+              scope: [],
+            },
+          ],
+        }),
         'utf-8',
       );
-      return { sessionId: 'session-1', output: "Sure, I've started a new run for that." };
+      return { sessionId: 'session-1', output: "Sure, I've added a task for that." };
     });
 
     const result = await chatWithArchitect(baseInput());
 
     expect(result).toEqual({
       sessionId: 'session-1',
-      reply: "Sure, I've started a new run for that.",
-      runRequest: 'Add a subtract(a, b) function too.',
+      reply: "Sure, I've added a task for that.",
+      newTasks: [
+        {
+          id: 'TASK-002',
+          title: 'Add subtract(a, b)',
+          dependsOn: [],
+          file: 'tasks/TASK-002.md',
+          checks: [],
+          scope: [],
+        },
+      ],
     });
-    await expect(fileExists(runRequestFilePath)).resolves.toBe(false);
+    await expect(fileExists(newTasksFilePath)).resolves.toBe(false);
   });
 
-  it('forwards model/cwd/resumeSessionId/signal and grants access to the run-request file location', async () => {
+  it('forwards model/cwd/resumeSessionId/signal and grants access to the whole run directory', async () => {
     mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-2', output: 'Understood.' });
     const controller = new AbortController();
     const onProgress = vi.fn();
@@ -96,5 +116,43 @@ describe('chatWithArchitect', () => {
       permissionMode: 'bypassPermissions',
     });
     expect(call?.additionalDirs).toEqual([runDir]);
+  });
+
+  it('tells the Architect to continue numbering from the highest existing task id', async () => {
+    mockedRunAgentHeadless.mockResolvedValue({ sessionId: 'session-3', output: 'Understood.' });
+    const plan: RunPlan = {
+      projectMarkdown: '# Brief',
+      tasksIndex: {
+        tasks: [
+          {
+            id: 'TASK-001',
+            title: 'First',
+            status: 'done',
+            dependsOn: [],
+            file: 'tasks/TASK-001.md',
+            correctionFiles: [],
+            retries: 0,
+            checks: [],
+            scope: [],
+          },
+          {
+            id: 'TASK-005',
+            title: 'Fifth',
+            status: 'done',
+            dependsOn: [],
+            file: 'tasks/TASK-005.md',
+            correctionFiles: [],
+            retries: 0,
+            checks: [],
+            scope: [],
+          },
+        ],
+      },
+    };
+
+    await chatWithArchitect({ ...baseInput(), plan });
+
+    const call = mockedRunAgentHeadless.mock.calls[0]?.[0];
+    expect(call?.prompt).toContain('TASK-006');
   });
 });

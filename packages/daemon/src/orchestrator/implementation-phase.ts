@@ -5,10 +5,11 @@ import {
   RunEventBus,
   getReadyTaskIds,
   loadTasksIndex,
+  mergeNewTasks,
   saveTasksIndex,
   selectDispatchableTaskIds,
 } from '@losina/core';
-import type { AgentMeshConfig, RunMeta, Task } from '@losina/schemas';
+import type { AgentMeshConfig, Task } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import type { DaemonServerHandle } from '../server.js';
 import { startArchitectLoop } from './architect-loop.js';
@@ -28,24 +29,12 @@ export interface ImplementationPhaseParams {
   /** When retrying a single previously failed task, its id and the human's note for the worker. */
   retryTaskId?: string;
   retryMessage?: string;
-  /** Forwarded to startArchitectLoop — see ArchitectLoopParams.createFollowUpRun. */
-  createFollowUpRun: (prompt: string) => Promise<RunMeta>;
 }
 
 const POLL_INTERVAL_MS = 1000;
 
 export async function runImplementationPhase(params: ImplementationPhaseParams): Promise<void> {
-  const {
-    runId,
-    archDir,
-    config,
-    runManager,
-    handle,
-    signal,
-    retryTaskId,
-    retryMessage,
-    createFollowUpRun,
-  } = params;
+  const { runId, archDir, config, runManager, handle, signal, retryTaskId, retryMessage } = params;
   const run = runManager.get(runId);
   if (!run) return;
 
@@ -78,15 +67,7 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
       runManager.setPendingConsultation(runId, event.taskId, event.seq);
     }
   });
-  const architectLoop = startArchitectLoop({
-    run,
-    runDir,
-    config,
-    bus,
-    signal,
-    runManager,
-    createFollowUpRun,
-  });
+  const architectLoop = startArchitectLoop({ run, runDir, config, bus, signal, runManager });
 
   // Applies a retry queued via RunManager.queueRetry (a task individually stuck while its
   // siblings are still in flight) directly to this loop's own in-memory tasks-index. Mutating a
@@ -129,11 +110,27 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
     }
   };
 
+  // Applies tasks a chat turn (see architect-loop.ts's 'chat' branch) decided to add to this
+  // run's own plan. Same reasoning as applyQueuedRetries above: this loop already holds
+  // `tasksIndex` in memory, so a new task is pushed onto that same object here rather than
+  // written straight to disk from outside, which would race this loop's own periodic saves.
+  const applyQueuedNewTasks = async (): Promise<void> => {
+    const queued = runManager.drainNewTasks(runId);
+    if (queued.length === 0) return;
+
+    mergeNewTasks(tasksIndex, queued);
+    await saveTasksIndex(tasksIndexPath, tasksIndex);
+    for (const spec of queued) {
+      bus.emit({ type: 'task:status-changed', runId, taskId: spec.id, status: 'pending' });
+    }
+  };
+
   try {
     while (true) {
       if (signal.aborted) throw new RunAbortedError(runId);
 
       await applyQueuedRetries();
+      await applyQueuedNewTasks();
 
       const cascaded = cascadeBlockDependentTasks(tasksIndex.tasks);
       if (cascaded.length > 0) {

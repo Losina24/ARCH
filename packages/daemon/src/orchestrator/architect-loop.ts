@@ -14,7 +14,7 @@ import type {
   ConsultationRequestedEvent,
   ReviewRequestedEvent,
 } from '@losina/ipc';
-import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
+import type { AgentMeshConfig, NewTaskSpec, RunMeta } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import { activityFromProgress } from './agent-progress.js';
 import { RunAbortedError } from './run-aborted-error.js';
@@ -25,12 +25,9 @@ export interface ArchitectLoopParams {
   config: AgentMeshConfig;
   bus: RunEventBus;
   signal: AbortSignal;
-  /** Only needed for chat:requested's pendingChats bookkeeping — see RunManager.beginChat/endChat. */
+  /** Needed for chat:requested's pendingChats bookkeeping (RunManager.beginChat/endChat) and to
+   * queue any new tasks a chat turn adds to this run's own plan — see the 'chat' branch below. */
   runManager: RunManager;
-  /** Starts a brand-new ARCH run (same cwd) for a chat turn that asked for real project work —
-   * see the 'chat' branch below and main.ts's own triggerChatPhase, which does the same thing on
-   * its one-shot path. */
-  createFollowUpRun: (prompt: string) => Promise<RunMeta>;
 }
 
 export interface ArchitectLoopHandle {
@@ -55,12 +52,15 @@ export function summarizeActivityFailure(error: unknown): string {
 }
 
 /**
- * A deterministic note appended after a chat turn that started a follow-up run, independent of
- * whatever the model itself said in its own reply — shared with main.ts's triggerChatPhase, the
- * one-shot path for the same feature, so the announcement reads identically either way.
+ * A deterministic note appended after a chat turn that added tasks to this run's own plan,
+ * independent of whatever the model itself said in its own reply — shared with main.ts's
+ * triggerChatPhase, the one-shot path for the same feature, so the announcement reads identically
+ * either way.
  */
-export function formatFollowUpRunAnnouncement(newRun: RunMeta): string {
-  return `Started a new run for that: ${newRun.runId.slice(0, 8)} — "${newRun.title}". Check Home to follow it.`;
+export function formatNewTasksAnnouncement(newTasks: NewTaskSpec[]): string {
+  const list = newTasks.map((task) => `${task.id} (${task.title})`).join(', ');
+  const noun = newTasks.length === 1 ? 'task' : 'tasks';
+  return `Added ${newTasks.length} new ${noun} to this run: ${list} — dispatching now.`;
 }
 
 type ArchitectJob =
@@ -81,7 +81,7 @@ type ArchitectJob =
  * — see RunSessionsSchema.
  */
 export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHandle {
-  const { run, runDir, config, bus, signal, runManager, createFollowUpRun } = params;
+  const { run, runDir, config, bus, signal, runManager } = params;
   const runId = run.runId;
   const architectAgentId = buildArchitectAgentId(runId);
 
@@ -361,14 +361,17 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           text: result.reply,
         });
 
-        if (result.runRequest) {
-          const newRun = await createFollowUpRun(result.runRequest);
+        if (result.newTasks?.length) {
+          // The loop's own tasks-index is only safe to mutate from inside its own iteration (see
+          // applyQueuedRetries in implementation-phase.ts for the exact same reasoning) — queue it
+          // there instead of touching disk directly from here.
+          runManager.queueNewTasks(runId, result.newTasks);
           bus.emit({
             type: 'agent:message',
             runId,
             agentId: architectAgentId,
             role: 'architect',
-            text: formatFollowUpRunAnnouncement(newRun),
+            text: formatNewTasksAnnouncement(result.newTasks),
           });
         }
       } catch (error) {

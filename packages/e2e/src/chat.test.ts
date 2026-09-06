@@ -165,25 +165,20 @@ describe('chatting with the Architect', () => {
     expect(event.text).toBe('Everything finished successfully.');
   });
 
-  function waitForFollowUpRunAnnouncement() {
+  function waitForNewTasksAnnouncement() {
     return waitForEvent(
       daemon.client,
       (event) =>
         event.type === 'agent:message' &&
         event.role === 'architect' &&
         !event.taskId &&
-        event.text.startsWith('Started a new run for that:'),
+        event.text.startsWith('Added '),
       15000,
     );
   }
 
-  it('starts a brand-new run when a chat message during implementation asks for real project work', async () => {
+  it('adds a task to this same run when a chat message during implementation asks for real project work', async () => {
     runtime?.queuePlan({ projectMarkdown: '# Brief', tasks: [{ id: 'TASK-001', title: 'Do work' }] });
-    // Consumed once the follow-up run reaches its own Definition phase.
-    runtime?.queuePlan({
-      projectMarkdown: '# Follow-up brief',
-      tasks: [{ id: 'TASK-001', title: 'Add subtract()' }],
-    });
 
     let releaseWorker: () => void = () => {};
     const workerGate = new Promise<void>((resolve) => {
@@ -193,9 +188,11 @@ describe('chatting with the Architect', () => {
       await workerGate;
     });
     runtime?.queueReview('TASK-001', 'approve');
-    runtime?.queueChatRunRequest(
-      'Add a subtract(a, b) function too.',
-      "Sure, I've started a new run for that.",
+    runtime?.queueWorker('TASK-002', async () => {});
+    runtime?.queueReview('TASK-002', 'approve');
+    runtime?.queueChatNewTasks(
+      [{ id: 'TASK-002', title: 'Add subtract(a, b)' }],
+      "Sure, I've added a task for that.",
     );
 
     try {
@@ -210,18 +207,28 @@ describe('chatting with the Architect', () => {
       const run = await createAndApprove('Do some work');
       await taskInProgress;
 
-      const announcement = waitForFollowUpRunAnnouncement();
+      const announcement = waitForNewTasksAnnouncement();
+      const newTaskDone = waitForEvent(
+        daemon.client,
+        (event) =>
+          event.type === 'task:status-changed' &&
+          event.taskId === 'TASK-002' &&
+          event.status === 'done',
+        15000,
+      );
       await daemon.client.chatWithArchitect({
         runId: run.runId,
         message: 'Also add a subtract function please',
       });
-      await announcement;
+      const announced = await announcement;
+      if (announced.type !== 'agent:message') throw new Error('unreachable');
+      expect(announced.text).toContain('TASK-002');
+      await newTaskDone;
 
-      const runs = await daemon.client.listRuns();
-      const newRun = runs.find((candidate) => candidate.runId !== run.runId);
-      expect(newRun).toBeTruthy();
-      expect(newRun?.prompt).toBe('Add a subtract(a, b) function too.');
-      expect(newRun?.cwd).toBe(repo.cwd);
+      // Still the same one run — no new run should ever have been created for this.
+      expect(await daemon.client.listRuns()).toHaveLength(1);
+      const plan = await daemon.client.getRunPlan({ runId: run.runId });
+      expect(plan?.tasksIndex.tasks.map((task) => task.id)).toEqual(['TASK-001', 'TASK-002']);
     } finally {
       releaseWorker();
     }
@@ -232,19 +239,17 @@ describe('chatting with the Architect', () => {
     );
   });
 
-  it('starts a brand-new run when a one-shot chat message (run already done) asks for real project work', async () => {
+  it('adds a task and reactivates this same run when a one-shot chat message (run already done) asks for real project work', async () => {
     runtime?.queuePlan({ projectMarkdown: '# Brief', tasks: [{ id: 'TASK-001', title: 'Do work' }] });
-    runtime?.queuePlan({
-      projectMarkdown: '# Follow-up brief',
-      tasks: [{ id: 'TASK-001', title: 'Add health check' }],
-    });
     runtime?.queueWorker('TASK-001', async ({ cwd }) => {
       await writeFile(join(cwd, 'marker.txt'), 'ok', 'utf-8');
     });
     runtime?.queueReview('TASK-001', 'approve');
-    runtime?.queueChatRunRequest(
-      'Add a health-check endpoint.',
-      'Done — starting a new run for that.',
+    runtime?.queueWorker('TASK-002', async () => {});
+    runtime?.queueReview('TASK-002', 'approve');
+    runtime?.queueChatNewTasks(
+      [{ id: 'TASK-002', title: 'Add a health-check endpoint' }],
+      'Done — added a task for that.',
     );
 
     const run = await createAndApprove('Write a marker file');
@@ -254,17 +259,30 @@ describe('chatting with the Architect', () => {
       15000,
     );
 
-    const announcement = waitForFollowUpRunAnnouncement();
+    const announcement = waitForNewTasksAnnouncement();
+    const reactivated = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'implementation',
+      15000,
+    );
     await daemon.client.chatWithArchitect({
       runId: run.runId,
       message: 'Can you add a health-check endpoint?',
     });
     await announcement;
+    await reactivated;
 
-    const runs = await daemon.client.listRuns();
-    const newRun = runs.find((candidate) => candidate.runId !== run.runId);
-    expect(newRun).toBeTruthy();
-    expect(newRun?.prompt).toBe('Add a health-check endpoint.');
-    expect(newRun?.cwd).toBe(repo.cwd);
+    await waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+
+    expect(await daemon.client.listRuns()).toHaveLength(1);
+    const plan = await daemon.client.getRunPlan({ runId: run.runId });
+    expect(plan?.tasksIndex.tasks.map((task) => ({ id: task.id, status: task.status }))).toEqual([
+      { id: 'TASK-001', status: 'done' },
+      { id: 'TASK-002', status: 'done' },
+    ]);
   });
 });

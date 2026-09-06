@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { RunHeadlessOptions, RunHeadlessResult } from '@losina/claude-runtime';
 import { getArchPaths } from '@losina/config';
 import type { CheckDefinition } from '@losina/schemas';
@@ -19,6 +19,20 @@ export interface PlanTaskSpec {
 export interface PlanSpec {
   projectMarkdown: string;
   tasks: PlanTaskSpec[];
+}
+
+/** A task the Architect decides to add to an already-approved run's plan from a chat turn —
+ * mirrors PlanTaskSpec's own ergonomics (optional fields with sensible test defaults). */
+export interface ChatNewTaskSpec {
+  id: string;
+  title: string;
+  dependsOn?: string[];
+  checks?: CheckDefinition[];
+  markdown?: string;
+  scope?: string[];
+  repoRoot?: string;
+  /** Defaults to `tasks/<id>.md`, same convention Definition-phase tasks already use. */
+  file?: string;
 }
 
 /** A returned string becomes this dispatch's `summary` (the fake worker's "explanation"); void defaults to 'done'. */
@@ -47,7 +61,7 @@ const REVIEW_TASK_ID_PATTERN = /implementing task\s+"([^"]+)"/;
 const CORRECTION_FILE_PATTERN = /exactly this path: "([^"]+)"/;
 const CONSULTATION_TASK_ID_PATTERN = /Stuck task: (\S+)/;
 const CONSULTATION_FILE_PATTERN = /Write your question to exactly this path: "([^"]+)"/;
-const CHAT_RUN_REQUEST_FILE_PATTERN = /write exactly one JSON file to "([^"]+)"/;
+const CHAT_NEW_TASKS_FILE_PATTERN = /write exactly one JSON file to "([^"]+)" matching \{"tasks"/;
 
 // Matches buildWorkerPrompt's own self-identification line — tried before the cwd/prompt-scan
 // fallback in resolveWorkerTaskId. Deliberately distinct wording from REVIEW_TASK_ID_PATTERN so
@@ -97,7 +111,7 @@ export class FakeClaudeRuntime {
   private readonly consultationPrompts = new Map<string, string>();
   private readonly reviewResumeSessionIds = new Map<string, Array<string | undefined>>();
   private readonly chatReplyQueue: string[] = [];
-  private readonly chatRunRequestQueue: { prompt: string; reply: string }[] = [];
+  private readonly chatNewTasksQueue: { tasks: ChatNewTaskSpec[]; reply: string }[] = [];
   private readonly chatCallLog: { prompt: string; resumeSessionId?: string; sessionId: string }[] =
     [];
 
@@ -153,10 +167,11 @@ export class FakeClaudeRuntime {
     this.chatReplyQueue.push(reply);
   }
 
-  /** Simulates the Architect deciding this chat turn needs a brand-new run: writes `{prompt}` to
-   * whatever run-request path the real prompt names, exactly like the real model would. */
-  queueChatRunRequest(prompt: string, reply = 'Understood.'): void {
-    this.chatRunRequestQueue.push({ prompt, reply });
+  /** Simulates the Architect deciding this chat turn adds tasks to the current run's own plan:
+   * writes each task's brief plus the `{"tasks": [...]}` manifest to whatever paths the real
+   * prompt names, exactly like the real model would. */
+  queueChatNewTasks(tasks: ChatNewTaskSpec[], reply = 'Understood.'): void {
+    this.chatNewTasksQueue.push({ tasks, reply });
   }
 
   chatCallCount(): number {
@@ -219,16 +234,40 @@ export class FakeClaudeRuntime {
       sessionId,
     });
 
-    const runRequest = this.chatRunRequestQueue.shift();
-    if (runRequest) {
-      const fileMatch = CHAT_RUN_REQUEST_FILE_PATTERN.exec(options.prompt);
+    const queued = this.chatNewTasksQueue.shift();
+    if (queued) {
+      const fileMatch = CHAT_NEW_TASKS_FILE_PATTERN.exec(options.prompt);
       if (!fileMatch) {
         throw new Error(
-          `FakeClaudeRuntime: could not find a chat run-request file path in prompt:\n${options.prompt}`,
+          `FakeClaudeRuntime: could not find a chat new-tasks file path in prompt:\n${options.prompt}`,
         );
       }
-      await writeFile(fileMatch[1], JSON.stringify({ prompt: runRequest.prompt }), 'utf-8');
-      return runRequest.reply;
+      const newTasksFilePath = fileMatch[1];
+      const runDir = dirname(newTasksFilePath);
+
+      const tasks = queued.tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        dependsOn: task.dependsOn ?? [],
+        file: task.file ?? `tasks/${task.id}.md`,
+        checks: task.checks ?? [],
+        scope: task.scope ?? [],
+        ...(task.repoRoot ? { repoRoot: task.repoRoot } : {}),
+      }));
+
+      // dispatchWorker reads a task's brief straight off disk (join(runDir, task.file)), so the
+      // fake has to actually put one there — same as writePlan already does for Definition phase.
+      for (const [index, task] of tasks.entries()) {
+        const markdown =
+          queued.tasks[index]?.markdown ??
+          `# ${task.title}\n\nDefinition of Done: implement "${task.id}".\n`;
+        const briefPath = join(runDir, task.file);
+        await mkdir(dirname(briefPath), { recursive: true });
+        await writeFile(briefPath, markdown, 'utf-8');
+      }
+
+      await writeFile(newTasksFilePath, JSON.stringify({ tasks }), 'utf-8');
+      return queued.reply;
     }
 
     return this.chatReplyQueue.shift() ?? 'Understood.';

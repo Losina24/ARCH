@@ -265,8 +265,11 @@ interface ChatPromptInput {
   run: RunMeta;
   plan: RunPlan | null;
   message: string;
-  /** Where to write a new-run request, if this turn warrants one — see the prompt body below. */
-  runRequestFilePath: string;
+  /** Where new task briefs and the manifest listing them would go — only meaningful, and only
+   * mentioned in the prompt, once a plan already exists (see formatNewWorkInstructions below). */
+  tasksDirPath: string;
+  newTasksFilePath: string;
+  nextTaskId: string;
 }
 
 function formatChatPlanSummary(plan: RunPlan | null): string {
@@ -285,6 +288,22 @@ Current tasks:
 ${taskLines || '(no tasks yet)'}`;
 }
 
+function formatNewWorkInstructions(input: {
+  plan: RunPlan | null;
+  tasksDirPath: string;
+  newTasksFilePath: string;
+  nextTaskId: string;
+}): string {
+  if (!input.plan) {
+    return '- There is no plan yet for this run, so there is nothing to add tasks to. Even if the human asks for new work, just reply — tell them it has to wait until the current plan is approved.';
+  }
+  return `- If the human wants real work done on this project — a change, a fix, a new feature, anything beyond answering — add it as new tasks to this same run yourself, right now, no need to ask first. This run already has its own Workers and its own review process; you are only adding to its plan, not starting anything new. For each new task, write a self-contained brief to "${input.tasksDirPath}/<id>.md" — same bar as a task brief from the initial plan: complete context, an explicit Definition of Done, anything a Worker would need, since it is the only brief a Worker gets. Then write exactly one JSON file to "${input.newTasksFilePath}" matching {"tasks": [...]}, one entry per new task, matching this schema:
+
+${TASKS_INDEX_SCHEMA}
+
+Continue the existing task numbering starting at "${input.nextTaskId}". "dependsOn" may reference any task already in this run, including ones already done. Never redefine, rewrite, or duplicate an existing task — only add genuinely new ones. Then, in your reply here, tell the human plainly how many tasks you added and what each will do.`;
+}
+
 /**
  * A one-shot turn in an ongoing conversation with the human who requested this run — unlike
  * review/consultation, this is genuinely resumed session-to-session (see chatSessionId in
@@ -292,7 +311,7 @@ ${taskLines || '(no tasks yet)'}`;
  * remembers every prior turn, exactly like a Claude Code session does.
  */
 export function buildChatPrompt(input: ChatPromptInput): string {
-  const { run, plan, message, runRequestFilePath } = input;
+  const { run, plan, message } = input;
   return `You are the ARCHITECT agent of ARCH, an autonomous multi-agent software engineering system. You are having an ongoing conversation with the human who requested this run. You must NOT edit any source file yourself — you have no worker to do that here. You may explore the repository (read files, run read-only commands) to answer accurately.
 
 Original request for this run:
@@ -310,8 +329,7 @@ ${message}
 Decide what this message actually needs:
 
 - If it's a question, a comment, or something you can fully resolve just by answering (status, explanation, advice, next steps to take manually): just reply. Do not write any file.
-- If the human wants real work done on this project — a change, a fix, a new feature, anything beyond answering — start a brand new ARCH run for it yourself, right now, no need to ask first: write exactly one JSON file to "${runRequestFilePath}" matching {"prompt": string}. That "prompt" is handed to a fresh ARCH run exactly as if the human had typed it into ARCH's own "new run" screen, so it must be a complete, self-contained brief — pull in everything relevant from this conversation and from the project's current state (the brief and tasks above), and write it so it reads correctly on its own, to someone who has not seen this conversation. Then, in your reply here, tell the human plainly that you've started a new run for it and briefly what it will do.
-- Never write that file for a question or a comment that doesn't actually call for new work — writing it always starts a real run.
+${formatNewWorkInstructions(input)}
 
 Reply directly and conversationally, as yourself. Do not end your message with any special sentinel line — your reply text is delivered to the human as-is.`;
 }
