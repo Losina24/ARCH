@@ -9,6 +9,7 @@ import { formatTime, taskStatusLogText, taskStatusLogTone } from '../activity-lo
 import { agentRoleColor } from '../agent-status.js';
 import { ACTIVITY_HEADLINE, EMPHASIS, ERROR, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
 import { GradientBox } from './gradient-box.js';
+import { MarkdownLite } from './markdown-lite.js';
 import { Spinner } from './spinner.js';
 
 interface AgentTranscriptProps {
@@ -367,7 +368,7 @@ export function AgentTranscript({
               </Text>
             </Text>
             <Box paddingLeft={2}>
-              <Text>{entry.text}</Text>
+              <MarkdownLite text={entry.text} />
             </Box>
           </Box>
         );
