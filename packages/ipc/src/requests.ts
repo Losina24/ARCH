@@ -62,6 +62,12 @@ export interface RunDismissConsultationRequest {
   taskId: string;
 }
 
+/** Sends a message to the Architect, in any run phase — the reply arrives via a later `agent:message` broadcast, not this RPC's own response. */
+export interface RunChatRequest {
+  runId: string;
+  message: string;
+}
+
 export type DaemonShutdownRequest = Record<string, never>;
 
 export type ConfigGetRequest = Record<string, never>;

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { RunHeadlessOptions, RunHeadlessResult } from '@losina/claude-runtime';
 import { getArchPaths } from '@losina/config';
 import type { CheckDefinition } from '@losina/schemas';
@@ -21,6 +21,20 @@ export interface PlanSpec {
   tasks: PlanTaskSpec[];
 }
 
+/** A task the Architect decides to add to an already-approved run's plan from a chat turn —
+ * mirrors PlanTaskSpec's own ergonomics (optional fields with sensible test defaults). */
+export interface ChatNewTaskSpec {
+  id: string;
+  title: string;
+  dependsOn?: string[];
+  checks?: CheckDefinition[];
+  markdown?: string;
+  scope?: string[];
+  repoRoot?: string;
+  /** Defaults to `tasks/<id>.md`, same convention Definition-phase tasks already use. */
+  file?: string;
+}
+
 /** A returned string becomes this dispatch's `summary` (the fake worker's "explanation"); void defaults to 'done'. */
 export type WorkerHandler = (
   options: RunHeadlessOptions,
@@ -36,6 +50,9 @@ export type ReviewVerdictSpec =
   | { crash: string };
 export type ConsultationVerdictSpec =
   | { question: string; recommendation: string }
+  /** Simulates the consultation call itself crashing — mirrors ReviewVerdictSpec's own 'crash'
+   * member above. */
+  | { crash: string };
 
 // Paths embedded in real prompts come from `path.join`, so on Windows they're
 // backslash-separated (e.g. "...\runs\<id>\project.md") rather than the POSIX form.
@@ -44,6 +61,7 @@ const REVIEW_TASK_ID_PATTERN = /implementing task\s+"([^"]+)"/;
 const CORRECTION_FILE_PATTERN = /exactly this path: "([^"]+)"/;
 const CONSULTATION_TASK_ID_PATTERN = /Stuck task: (\S+)/;
 const CONSULTATION_FILE_PATTERN = /Write your question to exactly this path: "([^"]+)"/;
+const CHAT_NEW_TASKS_FILE_PATTERN = /write exactly one JSON file to "([^"]+)" matching \{"tasks"/;
 
 // Matches buildWorkerPrompt's own self-identification line — tried before the cwd/prompt-scan
 // fallback in resolveWorkerTaskId. Deliberately distinct wording from REVIEW_TASK_ID_PATTERN so
@@ -87,10 +105,15 @@ export class FakeClaudeRuntime {
   private readonly reviewQueues = new Map<string, ReviewVerdictSpec[]>();
   private readonly workerCalls = new Map<string, number>();
   private readonly reviewPrompts = new Map<string, string>();
+  private readonly workerPrompts = new Map<string, string>();
   private readonly consultationQueues = new Map<string, ConsultationVerdictSpec[]>();
   private readonly consultationCalls = new Map<string, number>();
   private readonly consultationPrompts = new Map<string, string>();
-  private readonly workerPrompts = new Map<string, string>();
+  private readonly reviewResumeSessionIds = new Map<string, Array<string | undefined>>();
+  private readonly chatReplyQueue: string[] = [];
+  private readonly chatNewTasksQueue: { tasks: ChatNewTaskSpec[]; reply: string }[] = [];
+  private readonly chatCallLog: { prompt: string; resumeSessionId?: string; sessionId: string }[] =
+    [];
 
   queuePlan(spec: PlanSpec): void {
     this.planQueue.push(spec);
@@ -102,6 +125,11 @@ export class FakeClaudeRuntime {
 
   lastWorkerPrompt(taskId: string): string | undefined {
     return this.workerPrompts.get(taskId);
+  }
+
+  /** `resumeSessionId` as seen by each successive review call for this task, oldest first. */
+  reviewResumeSessionIdsFor(taskId: string): Array<string | undefined> {
+    return this.reviewResumeSessionIds.get(taskId) ?? [];
   }
 
   queueWorker(taskId: string, handler: WorkerHandler): void {
@@ -134,6 +162,37 @@ export class FakeClaudeRuntime {
     return this.consultationPrompts.get(taskId);
   }
 
+  /** A returned string becomes that call's reply; omitted calls default to 'Understood.' */
+  queueChatReply(reply: string): void {
+    this.chatReplyQueue.push(reply);
+  }
+
+  /** Simulates the Architect deciding this chat turn adds tasks to the current run's own plan:
+   * writes each task's brief plus the `{"tasks": [...]}` manifest to whatever paths the real
+   * prompt names, exactly like the real model would. */
+  queueChatNewTasks(tasks: ChatNewTaskSpec[], reply = 'Understood.'): void {
+    this.chatNewTasksQueue.push({ tasks, reply });
+  }
+
+  chatCallCount(): number {
+    return this.chatCallLog.length;
+  }
+
+  lastChatPrompt(): string | undefined {
+    return this.chatCallLog.at(-1)?.prompt;
+  }
+
+  /** The resumeSessionId this chat call was actually dispatched with (undefined for the first). */
+  chatResumeSessionIdAt(index: number): string | undefined {
+    return this.chatCallLog[index]?.resumeSessionId;
+  }
+
+  /** The (fake) sessionId this chat call resolved with — the next call's continuity is proven by
+   * checking its resumeSessionId against this. */
+  chatSessionIdAt(index: number): string | undefined {
+    return this.chatCallLog[index]?.sessionId;
+  }
+
   async handle(options: RunHeadlessOptions): Promise<RunHeadlessResult> {
     const sessionId = randomUUID();
 
@@ -157,8 +216,61 @@ export class FakeClaudeRuntime {
       return { sessionId, output };
     }
 
+    // buildChatPrompt has no output sentinel (the reply is the raw text), so detection matches
+    // its own distinctive role preamble instead of an instructed final line.
+    if (options.prompt.includes('ongoing conversation with the human')) {
+      const output = await this.handleChat(options, sessionId);
+      return { sessionId, output };
+    }
+
     const output = await this.runWorker(options);
     return { sessionId, output };
+  }
+
+  private async handleChat(options: RunHeadlessOptions, sessionId: string): Promise<string> {
+    this.chatCallLog.push({
+      prompt: options.prompt,
+      resumeSessionId: options.resumeSessionId,
+      sessionId,
+    });
+
+    const queued = this.chatNewTasksQueue.shift();
+    if (queued) {
+      const fileMatch = CHAT_NEW_TASKS_FILE_PATTERN.exec(options.prompt);
+      if (!fileMatch) {
+        throw new Error(
+          `FakeClaudeRuntime: could not find a chat new-tasks file path in prompt:\n${options.prompt}`,
+        );
+      }
+      const newTasksFilePath = fileMatch[1];
+      const runDir = dirname(newTasksFilePath);
+
+      const tasks = queued.tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        dependsOn: task.dependsOn ?? [],
+        file: task.file ?? `tasks/${task.id}.md`,
+        checks: task.checks ?? [],
+        scope: task.scope ?? [],
+        ...(task.repoRoot ? { repoRoot: task.repoRoot } : {}),
+      }));
+
+      // dispatchWorker reads a task's brief straight off disk (join(runDir, task.file)), so the
+      // fake has to actually put one there — same as writePlan already does for Definition phase.
+      for (const [index, task] of tasks.entries()) {
+        const markdown =
+          queued.tasks[index]?.markdown ??
+          `# ${task.title}\n\nDefinition of Done: implement "${task.id}".\n`;
+        const briefPath = join(runDir, task.file);
+        await mkdir(dirname(briefPath), { recursive: true });
+        await writeFile(briefPath, markdown, 'utf-8');
+      }
+
+      await writeFile(newTasksFilePath, JSON.stringify({ tasks }), 'utf-8');
+      return queued.reply;
+    }
+
+    return this.chatReplyQueue.shift() ?? 'Understood.';
   }
 
   private async writePlan(options: RunHeadlessOptions): Promise<void> {
@@ -222,6 +334,9 @@ export class FakeClaudeRuntime {
   private async writeReview(options: RunHeadlessOptions): Promise<string> {
     const taskId = extractReviewTaskId(options.prompt);
     this.reviewPrompts.set(taskId, options.prompt);
+    const resumeSessionIds = this.reviewResumeSessionIds.get(taskId) ?? [];
+    resumeSessionIds.push(options.resumeSessionId);
+    this.reviewResumeSessionIds.set(taskId, resumeSessionIds);
     const verdict = this.reviewQueues.get(taskId)?.shift() ?? 'approve';
     if (verdict === 'approve') return 'APPROVED';
     if ('crash' in verdict) throw new Error(verdict.crash);

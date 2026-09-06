@@ -145,6 +145,55 @@ describe('architect consultation on a stuck task', () => {
     expect(runtime?.workerCallCount('TASK-001')).toBe(2);
   });
 
+  it("increments seq on a second consultation for the same task instead of reusing the first one's", async () => {
+    // Each escalation-to-human is a fresh runTlTaskCycle call (retryTask re-enters it), with its
+    // own in-memory state — this reproduces a task that gets escalated, answered, retried, and
+    // fails again, to prove the second escalation's seq comes from persisted state rather than an
+    // in-memory counter that reset back to zero.
+    await daemon.client.setConfig({ maxRetries: 0 });
+    queueAlwaysFailingTask();
+    runtime?.queueWorker('TASK-001', async () => {});
+    runtime?.queueConsultation('TASK-001', {
+      question: 'First round: where should marker.txt live?',
+      recommendation: 'Create marker.txt at the repository root.',
+    });
+
+    const firstQuestion = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'consultation:question-asked' && event.taskId === 'TASK-001',
+      15000,
+    );
+    const run = await createAndApprove('Write a marker file');
+    const question1 = await firstQuestion;
+    if (question1.type !== 'consultation:question-asked') throw new Error('unreachable');
+    expect(question1.seq).toBe(1);
+
+    // The human's reply doesn't actually fix the check this time — the retried worker fails the
+    // same way, escalating a second time for the same task.
+    runtime?.queueWorker('TASK-001', async () => {});
+    runtime?.queueConsultation('TASK-001', {
+      question: 'Second round: that reply did not fix it either — try something else?',
+      recommendation: 'Create marker.txt under dist/ instead.',
+    });
+    const secondQuestion = waitForEvent(
+      daemon.client,
+      (event) =>
+        event.type === 'consultation:question-asked' &&
+        event.taskId === 'TASK-001' &&
+        event.question.startsWith('Second round'),
+      15000,
+    );
+    await daemon.client.retryTask({
+      runId: run.runId,
+      taskId: 'TASK-001',
+      message: question1.recommendation,
+    });
+    const question2 = await secondQuestion;
+    if (question2.type !== 'consultation:question-asked') throw new Error('unreachable');
+
+    expect(question2.seq).toBe(2);
+  });
+
   it('also fires for a crash that needs human intervention, without changing its awaiting_human outcome', async () => {
     queueAlwaysFailingTask();
     runtime?.queueWorker('TASK-001', async () => {

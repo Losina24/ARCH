@@ -5,6 +5,7 @@ import {
   RunEventBus,
   getReadyTaskIds,
   loadTasksIndex,
+  mergeNewTasks,
   saveTasksIndex,
   selectDispatchableTaskIds,
 } from '@losina/core';
@@ -54,6 +55,10 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
   // also forwarded to connected clients, so cycle/Architect coordination and
   // UI visibility stay driven by the same single stream.
   const bus = new RunEventBus();
+  // Registered so run.chat can reach this loop's bus while it's alive (see RunManager.getEventBus)
+  // instead of going through the one-shot triggerChatPhase path meant for phases with no live
+  // Architect — cleared in the finally block below alongside architectLoop.stop().
+  runManager.setEventBus(runId, bus);
   const unsubscribeForwarding = bus.subscribe((event) => handle.broadcast(event));
   // Recorded here (rather than read back off the persisted event log) so retryTask can look up
   // the right seq synchronously when a human's reply arrives — see RunManager.pendingConsultations.
@@ -62,7 +67,7 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
       runManager.setPendingConsultation(runId, event.taskId, event.seq);
     }
   });
-  const architectLoop = startArchitectLoop({ run, runDir, config, bus, signal });
+  const architectLoop = startArchitectLoop({ run, runDir, config, bus, signal, runManager });
 
   // Applies a retry queued via RunManager.queueRetry (a task individually stuck while its
   // siblings are still in flight) directly to this loop's own in-memory tasks-index. Mutating a
@@ -105,11 +110,27 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
     }
   };
 
+  // Applies tasks a chat turn (see architect-loop.ts's 'chat' branch) decided to add to this
+  // run's own plan. Same reasoning as applyQueuedRetries above: this loop already holds
+  // `tasksIndex` in memory, so a new task is pushed onto that same object here rather than
+  // written straight to disk from outside, which would race this loop's own periodic saves.
+  const applyQueuedNewTasks = async (): Promise<void> => {
+    const queued = runManager.drainNewTasks(runId);
+    if (queued.length === 0) return;
+
+    mergeNewTasks(tasksIndex, queued);
+    await saveTasksIndex(tasksIndexPath, tasksIndex);
+    for (const spec of queued) {
+      bus.emit({ type: 'task:status-changed', runId, taskId: spec.id, status: 'pending' });
+    }
+  };
+
   try {
     while (true) {
       if (signal.aborted) throw new RunAbortedError(runId);
 
       await applyQueuedRetries();
+      await applyQueuedNewTasks();
 
       const cascaded = cascadeBlockDependentTasks(tasksIndex.tasks);
       if (cascaded.length > 0) {
@@ -198,6 +219,7 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
     throw error;
   } finally {
     await architectLoop.stop();
+    runManager.clearEventBus(runId);
     unsubscribeForwarding();
     unsubscribeConsultations();
   }

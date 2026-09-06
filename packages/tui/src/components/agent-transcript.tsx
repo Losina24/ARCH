@@ -5,10 +5,12 @@ import type {
   TaskStatusChangedEvent,
 } from '@losina/ipc';
 import { Box, Text } from 'ink';
+import { useMemo } from 'react';
 import { formatTime, taskStatusLogText, taskStatusLogTone } from '../activity-log.js';
 import { agentRoleColor } from '../agent-status.js';
 import { ACTIVITY_HEADLINE, EMPHASIS, ERROR, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
 import { GradientBox } from './gradient-box.js';
+import { MarkdownLite } from './markdown-lite.js';
 import { Spinner } from './spinner.js';
 
 interface AgentTranscriptProps {
@@ -28,13 +30,23 @@ interface AgentTranscriptProps {
   agentLabel: string;
   emptyMessage?: string;
   width?: number;
+  /**
+   * Attributes every row to its owning agent instead of the single `agentLabel` — pass this when
+   * `agentIds` spans more than one genuinely different agent (e.g. the Agents tab's combined feed)
+   * rather than one agent's slot-reuse history (Console's single-agent view, which never needs
+   * this). Also makes the "latest active row gets a spinner" and the `×N` repeat-collapsing
+   * per-agent instead of global, so two agents working at once each show their own spinner and
+   * never collapse into each other's rows.
+   */
+  attribution?: Map<string, { label: string; color: string }>;
 }
 
 type TranscriptEntry =
-  | { kind: 'dispatch'; index: number; taskId?: string }
+  | { kind: 'dispatch'; index: number; agentId: string; taskId?: string }
   | {
       kind: 'lifecycle';
       index: number;
+      agentId: string;
       state: AgentActivityState;
       taskId?: string;
       detail?: string;
@@ -52,7 +64,14 @@ type TranscriptEntry =
       isResume: boolean;
       failureReason?: string;
     }
-  | { kind: 'message'; index: number; role: AgentRole; taskId?: string; text: string }
+  | {
+      kind: 'message';
+      index: number;
+      agentId: string;
+      role: AgentRole;
+      taskId?: string;
+      text: string;
+    }
   | {
       kind: 'human-prompt';
       index: number;
@@ -110,6 +129,7 @@ function isSameLifecycleActivity(
   current: Extract<TranscriptEntry, { kind: 'lifecycle' }>,
 ): boolean {
   return (
+    previous.agentId === current.agentId &&
     previous.state === current.state &&
     previous.taskId === current.taskId &&
     previous.detail === current.detail &&
@@ -148,7 +168,7 @@ function buildEntries(
             return;
           }
         }
-        entries.push({ kind: 'dispatch', index, taskId: event.taskId });
+        entries.push({ kind: 'dispatch', index, agentId: event.agentId, taskId: event.taskId });
       } else {
         // Both Codex item.completed and Claude tool_result mean only that control returned to the
         // model. They are useful as the live status in the Agents column, but recording one after
@@ -158,6 +178,7 @@ function buildEntries(
         const current: Extract<TranscriptEntry, { kind: 'lifecycle' }> = {
           kind: 'lifecycle',
           index,
+          agentId: event.agentId,
           lastIndex: index,
           repeatCount: 1,
           state: event.state,
@@ -184,6 +205,7 @@ function buildEntries(
       entries.push({
         kind: 'message',
         index,
+        agentId: event.agentId,
         role: event.role,
         taskId: event.taskId,
         text: event.text,
@@ -224,6 +246,22 @@ function buildEntries(
  */
 const DEFAULT_WIDTH = 60;
 
+function AttributionTag({
+  agentId,
+  attribution,
+}: {
+  agentId: string;
+  attribution?: Map<string, { label: string; color: string }>;
+}) {
+  const attr = attribution?.get(agentId);
+  if (!attr) return null;
+  return (
+    <Text bold color={attr.color}>
+      {attr.label}{' '}
+    </Text>
+  );
+}
+
 export function AgentTranscript({
   events,
   eventTimestamps = [],
@@ -232,16 +270,31 @@ export function AgentTranscript({
   agentLabel,
   emptyMessage = 'No activity yet for this agent.',
   width = DEFAULT_WIDTH,
+  attribution,
 }: AgentTranscriptProps) {
-  const entries = buildEntries(events, agentIds, taskIds);
+  // agentIds/taskIds are usually built fresh (map/literal) by every caller on every one of their
+  // own renders, so memoizing on the arrays themselves would never hit — a stable string key of
+  // their contents is what actually lets this skip the full O(events) rescan on an unrelated
+  // re-render (e.g. this run's chat box on every keystroke, see run-detail-view.tsx).
+  const agentIdsKey = agentIds.join('|');
+  const taskIdsKey = (taskIds ?? []).join('|');
+  const entries = useMemo(
+    () => buildEntries(events, agentIds, taskIds),
+    // biome-ignore lint/correctness/useExhaustiveDependencies: agentIdsKey/taskIdsKey are the real dependency (stable content, not array identity) — agentIds/taskIds themselves are read inside buildEntries via the closure, not tracked here on purpose.
+    [events, agentIdsKey, taskIdsKey],
+  );
 
   if (entries.length === 0) {
     return <Text dimColor>{emptyMessage}</Text>;
   }
 
-  let lastLifecycleIndex = -1;
+  // Per-agent, not one shared value — in attributed (multi-agent) mode, each agent's own most
+  // recent lifecycle row should keep animating even while a sibling agent's is also still active;
+  // in the single-agent case (no attribution) this map only ever has one key, so behavior is
+  // unchanged from before.
+  const lastLifecycleIndexByAgent = new Map<string, number>();
   for (const entry of entries) {
-    if (entry.kind === 'lifecycle') lastLifecycleIndex = entry.lastIndex;
+    if (entry.kind === 'lifecycle') lastLifecycleIndexByAgent.set(entry.agentId, entry.lastIndex);
   }
 
   return (
@@ -255,6 +308,7 @@ export function AgentTranscript({
           return (
             <Text key={entry.index} dimColor>
               {time}
+              {attribution && <AttributionTag agentId={entry.agentId} attribution={attribution} />}
               {'→ '}
               {entry.taskId ? `sent prompt · ${entry.taskId}` : 'sent prompt'}
             </Text>
@@ -265,9 +319,10 @@ export function AgentTranscript({
           return (
             <Text key={entry.index}>
               {time}
+              {attribution && <AttributionTag agentId={entry.agentId} attribution={attribution} />}
               <LifecycleGlyph
                 state={entry.state}
-                isLatest={entry.lastIndex === lastLifecycleIndex}
+                isLatest={entry.lastIndex === lastLifecycleIndexByAgent.get(entry.agentId)}
               />
               <Text dimColor>
                 {' '}
@@ -320,11 +375,11 @@ export function AgentTranscript({
             <Text>
               {time}
               <Text bold color={agentRoleColor(entry.role)}>
-                {ACTIVITY_HEADLINE} {agentLabel}
+                {ACTIVITY_HEADLINE} {attribution?.get(entry.agentId)?.label ?? agentLabel}
               </Text>
             </Text>
             <Box paddingLeft={2}>
-              <Text>{entry.text}</Text>
+              <MarkdownLite text={entry.text} />
             </Box>
           </Box>
         );
