@@ -265,8 +265,10 @@ describe('buildChatPrompt', () => {
     },
   };
 
+  const runRequestFilePath = '/home/user/.arch/projects/project-abc12345/runs/run-1/chat-run-request.json';
+
   it('embeds the original request, the plan brief, and the human message when a plan exists', () => {
-    const prompt = buildChatPrompt({ run, plan, message: 'How is TASK-001 doing?' });
+    const prompt = buildChatPrompt({ run, plan, message: 'How is TASK-001 doing?', runRequestFilePath });
     expect(prompt).toContain('Add a function that sums two numbers');
     expect(prompt).toContain('# Add add(a, b)');
     expect(prompt).toContain('TASK-001 (done): Implement add()');
@@ -274,19 +276,27 @@ describe('buildChatPrompt', () => {
   });
 
   it('tells the Architect the project is still being defined when there is no plan yet', () => {
-    const prompt = buildChatPrompt({ run, plan: null, message: 'What are we building?' });
+    const prompt = buildChatPrompt({ run, plan: null, message: 'What are we building?', runRequestFilePath });
     expect(prompt).toContain('still being defined');
     expect(prompt).not.toContain('Current tasks');
   });
 
-  it('instructs the Architect not to edit files and to reply with no sentinel', () => {
-    const prompt = buildChatPrompt({ run, plan: null, message: 'hi' });
-    expect(prompt).toContain('must NOT edit, create, or delete any file');
-    expect(prompt).toContain('do not end your message with any special sentinel line');
+  it('instructs the Architect it cannot edit source files and to reply with no sentinel', () => {
+    const prompt = buildChatPrompt({ run, plan: null, message: 'hi', runRequestFilePath });
+    expect(prompt).toContain('must NOT edit any source file yourself');
+    expect(prompt).toContain('Do not end your message with any special sentinel line');
+  });
+
+  it('tells the Architect to request a new run by writing the given path, only for real work', () => {
+    const prompt = buildChatPrompt({ run, plan, message: 'Add a subtract() function too', runRequestFilePath });
+    expect(prompt).toContain(runRequestFilePath);
+    expect(prompt).toContain('{"prompt": string}');
+    expect(prompt).toContain('as if the human had typed it into');
+    expect(prompt).toContain("Never write that file for a question or a comment that doesn't actually call for new work");
   });
 
   it('never mentions the unrelated dispatch markers other prompt kinds key off of', () => {
-    const prompt = buildChatPrompt({ run, plan, message: 'hi' });
+    const prompt = buildChatPrompt({ run, plan, message: 'hi', runRequestFilePath });
     expect(prompt).not.toContain('GRILLING_DONE');
     expect(prompt).not.toContain('Definition phase');
     expect(prompt).not.toContain('semantic review');

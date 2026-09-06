@@ -8,7 +8,7 @@ import {
   saveTasksIndex,
   selectDispatchableTaskIds,
 } from '@losina/core';
-import type { AgentMeshConfig, Task } from '@losina/schemas';
+import type { AgentMeshConfig, RunMeta, Task } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import type { DaemonServerHandle } from '../server.js';
 import { startArchitectLoop } from './architect-loop.js';
@@ -28,12 +28,24 @@ export interface ImplementationPhaseParams {
   /** When retrying a single previously failed task, its id and the human's note for the worker. */
   retryTaskId?: string;
   retryMessage?: string;
+  /** Forwarded to startArchitectLoop — see ArchitectLoopParams.createFollowUpRun. */
+  createFollowUpRun: (prompt: string) => Promise<RunMeta>;
 }
 
 const POLL_INTERVAL_MS = 1000;
 
 export async function runImplementationPhase(params: ImplementationPhaseParams): Promise<void> {
-  const { runId, archDir, config, runManager, handle, signal, retryTaskId, retryMessage } = params;
+  const {
+    runId,
+    archDir,
+    config,
+    runManager,
+    handle,
+    signal,
+    retryTaskId,
+    retryMessage,
+    createFollowUpRun,
+  } = params;
   const run = runManager.get(runId);
   if (!run) return;
 
@@ -66,7 +78,15 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
       runManager.setPendingConsultation(runId, event.taskId, event.seq);
     }
   });
-  const architectLoop = startArchitectLoop({ run, runDir, config, bus, signal, runManager });
+  const architectLoop = startArchitectLoop({
+    run,
+    runDir,
+    config,
+    bus,
+    signal,
+    runManager,
+    createFollowUpRun,
+  });
 
   // Applies a retry queued via RunManager.queueRetry (a task individually stuck while its
   // siblings are still in flight) directly to this loop's own in-memory tasks-index. Mutating a

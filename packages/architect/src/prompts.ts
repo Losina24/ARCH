@@ -265,6 +265,8 @@ interface ChatPromptInput {
   run: RunMeta;
   plan: RunPlan | null;
   message: string;
+  /** Where to write a new-run request, if this turn warrants one — see the prompt body below. */
+  runRequestFilePath: string;
 }
 
 function formatChatPlanSummary(plan: RunPlan | null): string {
@@ -290,8 +292,8 @@ ${taskLines || '(no tasks yet)'}`;
  * remembers every prior turn, exactly like a Claude Code session does.
  */
 export function buildChatPrompt(input: ChatPromptInput): string {
-  const { run, plan, message } = input;
-  return `You are the ARCHITECT agent of ARCH, an autonomous multi-agent software engineering system. You are having an ongoing conversation with the human who requested this run — this is not a new request, just a question or comment about the run in progress. You must NOT edit, create, or delete any file; this is a read-only conversation. You may explore the repository (read files, run read-only commands) to answer accurately.
+  const { run, plan, message, runRequestFilePath } = input;
+  return `You are the ARCHITECT agent of ARCH, an autonomous multi-agent software engineering system. You are having an ongoing conversation with the human who requested this run. You must NOT edit any source file yourself — you have no worker to do that here. You may explore the repository (read files, run read-only commands) to answer accurately.
 
 Original request for this run:
 """
@@ -305,5 +307,11 @@ The human's message:
 ${message}
 """
 
-Reply directly and conversationally, as yourself. Do not write to any file, and do not end your message with any special sentinel line — your reply text is delivered to the human as-is.`;
+Decide what this message actually needs:
+
+- If it's a question, a comment, or something you can fully resolve just by answering (status, explanation, advice, next steps to take manually): just reply. Do not write any file.
+- If the human wants real work done on this project — a change, a fix, a new feature, anything beyond answering — start a brand new ARCH run for it yourself, right now, no need to ask first: write exactly one JSON file to "${runRequestFilePath}" matching {"prompt": string}. That "prompt" is handed to a fresh ARCH run exactly as if the human had typed it into ARCH's own "new run" screen, so it must be a complete, self-contained brief — pull in everything relevant from this conversation and from the project's current state (the brief and tasks above), and write it so it reads correctly on its own, to someone who has not seen this conversation. Then, in your reply here, tell the human plainly that you've started a new run for it and briefly what it will do.
+- Never write that file for a question or a comment that doesn't actually call for new work — writing it always starts a real run.
+
+Reply directly and conversationally, as yourself. Do not end your message with any special sentinel line — your reply text is delivered to the human as-is.`;
 }

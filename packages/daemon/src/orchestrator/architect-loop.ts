@@ -27,6 +27,10 @@ export interface ArchitectLoopParams {
   signal: AbortSignal;
   /** Only needed for chat:requested's pendingChats bookkeeping — see RunManager.beginChat/endChat. */
   runManager: RunManager;
+  /** Starts a brand-new ARCH run (same cwd) for a chat turn that asked for real project work —
+   * see the 'chat' branch below and main.ts's own triggerChatPhase, which does the same thing on
+   * its one-shot path. */
+  createFollowUpRun: (prompt: string) => Promise<RunMeta>;
 }
 
 export interface ArchitectLoopHandle {
@@ -50,6 +54,15 @@ export function summarizeActivityFailure(error: unknown): string {
     : message;
 }
 
+/**
+ * A deterministic note appended after a chat turn that started a follow-up run, independent of
+ * whatever the model itself said in its own reply — shared with main.ts's triggerChatPhase, the
+ * one-shot path for the same feature, so the announcement reads identically either way.
+ */
+export function formatFollowUpRunAnnouncement(newRun: RunMeta): string {
+  return `Started a new run for that: ${newRun.runId.slice(0, 8)} — "${newRun.title}". Check Home to follow it.`;
+}
+
 type ArchitectJob =
   | { kind: 'review'; event: ReviewRequestedEvent }
   | { kind: 'consultation'; event: ConsultationRequestedEvent }
@@ -68,7 +81,7 @@ type ArchitectJob =
  * — see RunSessionsSchema.
  */
 export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHandle {
-  const { run, runDir, config, bus, signal, runManager } = params;
+  const { run, runDir, config, bus, signal, runManager, createFollowUpRun } = params;
   const runId = run.runId;
   const architectAgentId = buildArchitectAgentId(runId);
 
@@ -316,6 +329,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
         const plan = await loadRunPlan(runDir);
         const result = await chatWithArchitect({
           run,
+          runDir,
           plan,
           message: next.event.message,
           model: config.models.architectModel,
@@ -346,6 +360,17 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           role: 'architect',
           text: result.reply,
         });
+
+        if (result.runRequest) {
+          const newRun = await createFollowUpRun(result.runRequest);
+          bus.emit({
+            type: 'agent:message',
+            runId,
+            agentId: architectAgentId,
+            role: 'architect',
+            text: formatFollowUpRunAnnouncement(newRun),
+          });
+        }
       } catch (error) {
         if (error instanceof RunAbortedError) return;
         console.error(`[daemon] architect loop failed to process chat message for run ${runId}:`, error);

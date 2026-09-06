@@ -47,6 +47,7 @@ const REVIEW_TASK_ID_PATTERN = /implementing task\s+"([^"]+)"/;
 const CORRECTION_FILE_PATTERN = /exactly this path: "([^"]+)"/;
 const CONSULTATION_TASK_ID_PATTERN = /Stuck task: (\S+)/;
 const CONSULTATION_FILE_PATTERN = /Write your question to exactly this path: "([^"]+)"/;
+const CHAT_RUN_REQUEST_FILE_PATTERN = /write exactly one JSON file to "([^"]+)"/;
 
 // Matches buildWorkerPrompt's own self-identification line — tried before the cwd/prompt-scan
 // fallback in resolveWorkerTaskId. Deliberately distinct wording from REVIEW_TASK_ID_PATTERN so
@@ -96,6 +97,7 @@ export class FakeClaudeRuntime {
   private readonly consultationPrompts = new Map<string, string>();
   private readonly reviewResumeSessionIds = new Map<string, Array<string | undefined>>();
   private readonly chatReplyQueue: string[] = [];
+  private readonly chatRunRequestQueue: { prompt: string; reply: string }[] = [];
   private readonly chatCallLog: { prompt: string; resumeSessionId?: string; sessionId: string }[] =
     [];
 
@@ -151,6 +153,12 @@ export class FakeClaudeRuntime {
     this.chatReplyQueue.push(reply);
   }
 
+  /** Simulates the Architect deciding this chat turn needs a brand-new run: writes `{prompt}` to
+   * whatever run-request path the real prompt names, exactly like the real model would. */
+  queueChatRunRequest(prompt: string, reply = 'Understood.'): void {
+    this.chatRunRequestQueue.push({ prompt, reply });
+  }
+
   chatCallCount(): number {
     return this.chatCallLog.length;
   }
@@ -196,7 +204,7 @@ export class FakeClaudeRuntime {
     // buildChatPrompt has no output sentinel (the reply is the raw text), so detection matches
     // its own distinctive role preamble instead of an instructed final line.
     if (options.prompt.includes('ongoing conversation with the human')) {
-      const output = this.handleChat(options, sessionId);
+      const output = await this.handleChat(options, sessionId);
       return { sessionId, output };
     }
 
@@ -204,12 +212,25 @@ export class FakeClaudeRuntime {
     return { sessionId, output };
   }
 
-  private handleChat(options: RunHeadlessOptions, sessionId: string): string {
+  private async handleChat(options: RunHeadlessOptions, sessionId: string): Promise<string> {
     this.chatCallLog.push({
       prompt: options.prompt,
       resumeSessionId: options.resumeSessionId,
       sessionId,
     });
+
+    const runRequest = this.chatRunRequestQueue.shift();
+    if (runRequest) {
+      const fileMatch = CHAT_RUN_REQUEST_FILE_PATTERN.exec(options.prompt);
+      if (!fileMatch) {
+        throw new Error(
+          `FakeClaudeRuntime: could not find a chat run-request file path in prompt:\n${options.prompt}`,
+        );
+      }
+      await writeFile(fileMatch[1], JSON.stringify({ prompt: runRequest.prompt }), 'utf-8');
+      return runRequest.reply;
+    }
+
     return this.chatReplyQueue.shift() ?? 'Understood.';
   }
 

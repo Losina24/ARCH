@@ -30,6 +30,7 @@ import type {
   RunRetryTaskRequest,
 } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta, RunPlan } from '@losina/schemas';
+import { formatFollowUpRunAnnouncement } from './orchestrator/architect-loop.js';
 import { runDefinitionPhase } from './orchestrator/definition-phase.js';
 import { runGrillingPhase } from './orchestrator/grilling-phase.js';
 import { runImplementationPhase } from './orchestrator/implementation-phase.js';
@@ -369,6 +370,7 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
 
           const result = await chatWithArchitect({
             run,
+            runDir,
             plan,
             message,
             model: config.models.architectModel,
@@ -385,6 +387,21 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
             role: 'architect',
             text: result.reply,
           });
+
+          if (result.runRequest) {
+            const newRun = await createRun(runManager, archDir, {
+              prompt: result.runRequest,
+              cwd: run.cwd,
+            });
+            triggerGrillingPhase(newRun.runId);
+            handle.broadcast({
+              type: 'agent:message',
+              runId,
+              agentId: id,
+              role: 'architect',
+              text: formatFollowUpRunAnnouncement(newRun),
+            });
+          }
         } catch (error) {
           console.error(`[daemon] chat failed for run ${runId}:`, error);
           handle.broadcast({
@@ -426,6 +443,11 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
             signal,
             retryTaskId: retry?.retryTaskId,
             retryMessage: retry?.retryMessage,
+            createFollowUpRun: async (prompt: string) => {
+              const newRun = await createRun(runManager, archDir, { prompt, cwd });
+              triggerGrillingPhase(newRun.runId);
+              return newRun;
+            },
           }),
         )
         .catch((error) => {
