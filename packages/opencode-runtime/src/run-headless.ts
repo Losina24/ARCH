@@ -13,6 +13,8 @@ export interface RunHeadlessOptions {
   resumeSessionId?: string;
   permissionMode?: PermissionMode;
   signal?: AbortSignal;
+  /** Optional hard subprocess limit. Omitted in production so active long-running turns can finish. */
+  timeoutMs?: number;
   /** Receives each raw JSON event as soon as OpenCode writes its JSONL line. */
   onEvent?: (event: OpencodeJsonlEvent) => void;
   /** Extra directories the session may read/write outside `cwd`. See the guard below. */
@@ -87,10 +89,22 @@ export class OpencodeCliExecutionError extends Error {
   }
 }
 
+/** The CLI exceeded an explicitly configured hard execution boundary and was terminated. */
+export class OpencodeTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`OpenCode CLI timed out after ${Math.round(timeoutMs / 60_000)} minutes.`);
+    this.name = 'OpencodeTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 interface ExecaLikeError {
   stdout?: unknown;
   exitCode?: number;
   signal?: string;
+  timedOut?: boolean;
 }
 
 // execa always attaches `stdout` to the error it throws for a failure that actually spawned a
@@ -263,7 +277,14 @@ async function writeOversizedPromptFile(prompt: string): Promise<string> {
   return path;
 }
 
+function toTimeout(error: unknown, timeoutMs: number | undefined): OpencodeTimeoutError | null {
+  return timeoutMs !== undefined && isExecaLikeError(error) && error.timedOut === true
+    ? new OpencodeTimeoutError(timeoutMs)
+    : null;
+}
+
 export async function runOpencodeHeadless(options: RunHeadlessOptions): Promise<RunHeadlessResult> {
+  const timeoutMs = options.timeoutMs;
   // OpenCode has no per-directory allowlist analogous to Claude's --add-dir: the `build` agent
   // (used for 'bypassPermissions', the only mode ARCH's agents actually dispatch headless with)
   // already grants unrestricted filesystem access, so additionalDirs is always satisfied there.
@@ -308,6 +329,7 @@ export async function runOpencodeHeadless(options: RunHeadlessOptions): Promise<
       const subprocess = execa('opencode', args, {
         cwd: options.cwd,
         cancelSignal: options.signal,
+        ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
       });
       observingLiveStream = observeJsonlEvents(
         (subprocess as unknown as { stdout?: unknown }).stdout,
@@ -320,6 +342,7 @@ export async function runOpencodeHeadless(options: RunHeadlessOptions): Promise<
       if (!observingLiveStream) replayEvents(error.stdout, options.onEvent);
       const events = parseJsonlEvents(error.stdout);
       throw (
+        toTimeout(error, timeoutMs) ??
         toRejectionOrAbort(events) ??
         (sessionIdOf(events) === undefined
           ? new OpencodeApiRejectionError(

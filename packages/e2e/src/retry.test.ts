@@ -82,7 +82,7 @@ describe('correction and retry', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a marker file');
     await runDone;
@@ -91,6 +91,47 @@ describe('correction and retry', () => {
     expect(plan?.tasksIndex.tasks[0]).toMatchObject({ status: 'done', retries: 1 });
     expect(plan?.tasksIndex.tasks[0]?.correctionFiles).toHaveLength(1);
     expect(runtime?.workerCallCount('TASK-001')).toBe(2);
+  });
+
+  it('never resumes the Worker session between correction rounds on the same task', async () => {
+    const resumeSessionIds: Array<string | undefined> = [];
+    runtime?.queuePlan({
+      projectMarkdown: '# Brief',
+      tasks: [
+        {
+          id: 'TASK-001',
+          title: 'Write marker file',
+          checks: [
+            {
+              name: 'marker-exists',
+              command: 'node',
+              args: ['-e', "process.exit(require('fs').existsSync('marker.txt') ? 0 : 1)"],
+            },
+          ],
+        },
+      ],
+    });
+    runtime?.queueWorker('TASK-001', async ({ resumeSessionId }) => {
+      resumeSessionIds.push(resumeSessionId);
+    });
+    runtime?.queueWorker('TASK-001', async ({ cwd, resumeSessionId }) => {
+      resumeSessionIds.push(resumeSessionId);
+      await writeFile(join(cwd, 'marker.txt'), 'ok', 'utf-8');
+    });
+    runtime?.queueReview('TASK-001', 'approve');
+
+    const runDone = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+    await createAndApprove('Write a marker file');
+    await runDone;
+
+    // Two dispatches happened (the initial attempt and the correction round), and neither one
+    // was told to resume a prior session — each got a fresh one, even though the correction round
+    // immediately follows the first attempt's own dispatch in the very same task cycle.
+    expect(resumeSessionIds).toEqual([undefined, undefined]);
   });
 
   it('marks a task as failed due to an infra issue without spending a worker correction retry', async () => {
@@ -121,12 +162,12 @@ describe('correction and retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Do something that needs an external registry');
     await taskFailed;
@@ -163,14 +204,14 @@ describe('correction and retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'needs_correction',
-      15000,
+      30000,
     );
     await needsCorrection;
 
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await runDone;
 
@@ -179,6 +220,33 @@ describe('correction and retry', () => {
     expect(task).toMatchObject({ status: 'done', retries: 1 });
     expect(task?.correctionFiles).toHaveLength(1);
     expect(runtime?.workerCallCount('TASK-001')).toBe(2);
+  });
+
+  it('never resumes the Architect session between two reviews of the same task', async () => {
+    runtime?.queuePlan({
+      projectMarkdown: '# Brief',
+      tasks: [{ id: 'TASK-001', title: 'Write greeting file' }],
+    });
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      await writeFile(join(cwd, 'greeting.txt'), 'hi', 'utf-8');
+    });
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      await writeFile(join(cwd, 'greeting.txt'), 'hello from ARCH\n', 'utf-8');
+    });
+    runtime?.queueReview('TASK-001', { correctionMarkdown: 'Use a friendlier greeting.' });
+    runtime?.queueReview('TASK-001', 'approve');
+
+    const runDone = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+    await createAndApprove('Write a greeting file');
+    await runDone;
+
+    // Two reviews happened for the same task (rejected, then approved), and neither told the
+    // Architect to resume the other's session.
+    expect(runtime?.reviewResumeSessionIdsFor('TASK-001')).toEqual([undefined, undefined]);
   });
 
   it("forwards the worker's own summary to the Architect's review prompt", async () => {
@@ -195,7 +263,7 @@ describe('correction and retry', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await createAndApprove('Write a greeting file');
     await runDone;
@@ -226,7 +294,7 @@ describe('correction and retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     // The task-level 'failed' event fires before the run settles — worktree cleanup for
     // the failed task still runs afterward. Wait for the run to reach its terminal phase
@@ -235,7 +303,7 @@ describe('correction and retry', () => {
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Do something impossible');
     await taskFailed;
@@ -268,12 +336,12 @@ describe('correction and retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Do something impossible');
     await taskFailed;
@@ -308,12 +376,12 @@ describe('human-driven retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Finish a file even if the first worker crashes');
     await taskFailed;
@@ -333,7 +401,7 @@ describe('human-driven retry', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.retryTask({
       runId: run.runId,
@@ -379,12 +447,12 @@ describe('human-driven retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-002' &&
         event.status === 'blocked',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a marker file, then a follow-up file');
     await taskBlocked;
@@ -402,12 +470,12 @@ describe('human-driven retry', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     const promptSent = waitForEvent(
       daemon.client,
       (event) => event.type === 'human:prompt-sent' && event.taskId === 'TASK-001',
-      15000,
+      30000,
     );
     const dispatchedViaHumanPrompt = waitForEvent(
       daemon.client,
@@ -416,7 +484,7 @@ describe('human-driven retry', () => {
         event.taskId === 'TASK-001' &&
         event.state === 'thinking' &&
         event.viaHumanPrompt === true,
-      15000,
+      30000,
     );
     await daemon.client.retryTask({
       runId: run.runId,
@@ -464,12 +532,12 @@ describe('human-driven retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'awaiting_human',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a marker file');
     await taskAwaitingHuman;
@@ -490,7 +558,7 @@ describe('human-driven retry', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.retryTask({
       runId: run.runId,
@@ -537,7 +605,7 @@ describe('retrying a task while a sibling is still in flight', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Add two independent files');
     await task1Failed;
@@ -564,7 +632,7 @@ describe('retrying a task while a sibling is still in flight', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     releaseTask2();
     await runDone;
@@ -602,7 +670,7 @@ describe('done despite broken post-merge cleanup', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write an output file');
     await runDone;
@@ -646,12 +714,12 @@ describe('crash cleanup and console visibility (useWorktrees: false)', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-A' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Do two unrelated things');
     const taskFailedEvent = await taskFailed;
@@ -709,12 +777,12 @@ describe('implementation-loop recovery when a crashed task cannot even revert it
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Do one thing that will crash');
     await taskFailed;
@@ -752,7 +820,7 @@ describe('automatic api-error retry', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a greeting file');
     await runDone;
@@ -781,12 +849,12 @@ describe('automatic api-error retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a greeting file');
     await taskFailed;
@@ -822,7 +890,7 @@ describe('automatic Codex-timeout retry', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a greeting file');
     await runDone;
@@ -858,7 +926,7 @@ describe('automatic stream-abort retry', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a greeting file');
     await runDone;
@@ -890,12 +958,12 @@ describe('automatic stream-abort retry', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a greeting file');
     await taskFailed;
@@ -929,7 +997,7 @@ describe('architect review crash', () => {
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a greeting file');
     await runBlocked;

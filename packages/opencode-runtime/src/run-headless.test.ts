@@ -6,6 +6,7 @@ import {
   OpencodeApiRejectionError,
   OpencodeCliExecutionError,
   OpencodeStreamAbortedError,
+  OpencodeTimeoutError,
   runOpencodeHeadless,
 } from './run-headless.js';
 
@@ -212,6 +213,37 @@ describe('runOpencodeHeadless', () => {
     });
     const [, , opts] = mockedExeca.mock.calls[0] ?? [];
     expect((opts as Record<string, unknown>).cancelSignal).toBe(controller.signal);
+  });
+
+  it('throws a short OpencodeTimeoutError when the hard subprocess timeout fires', async () => {
+    const secretPrompt = 'do not expose this prompt';
+    const execaError = Object.assign(new Error(`Command timed out: opencode run ${secretPrompt}`), {
+      stdout: '',
+      timedOut: true,
+      signal: 'SIGTERM',
+    });
+    mockedExeca.mockRejectedValue(execaError);
+
+    const promise = runOpencodeHeadless({
+      prompt: secretPrompt,
+      model: 'github-copilot/gpt-4.1',
+      cwd: '/tmp',
+      timeoutMs: 30 * 60 * 1000,
+    });
+    await expect(promise).rejects.toBeInstanceOf(OpencodeTimeoutError);
+    await promise.catch((error: Error) => {
+      expect(error.message).toBe('OpenCode CLI timed out after 30 minutes.');
+      expect(error.message).not.toContain(secretPrompt);
+    });
+    const [, , options] = mockedExeca.mock.calls[0] ?? [];
+    expect(options).toMatchObject({ timeout: 30 * 60 * 1000 });
+  });
+
+  it('omits the timeout option when timeoutMs is not provided', async () => {
+    mockStdout(jsonl({ type: 'text', sessionID: 'ses-1', part: { type: 'text', text: 'done' } }));
+    await runOpencodeHeadless({ prompt: 'p', model: 'github-copilot/gpt-4.1', cwd: '/tmp' });
+    const [, , options] = mockedExeca.mock.calls[0] ?? [];
+    expect(options).not.toHaveProperty('timeout');
   });
 
   it('throws when additionalDirs is used outside bypassPermissions', async () => {

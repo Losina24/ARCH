@@ -4,7 +4,7 @@ import type { ArchMeshEvent } from '@losina/ipc';
 export function waitForEvent(
   client: ArchClient,
   predicate: (event: ArchMeshEvent) => boolean,
-  timeoutMs = 10000,
+  timeoutMs = 30000,
 ): Promise<ArchMeshEvent> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

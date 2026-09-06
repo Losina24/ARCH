@@ -1,0 +1,21 @@
+name: Enforce PR source branch
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+    branches: [main]
+
+jobs:
+  check-source-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify PR comes from develop or a release branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [[ "$HEAD_REF" == "develop" || "$HEAD_REF" =~ ^release/ ]]; then
+            echo "OK: PR to main from '$HEAD_REF' is allowed."
+          else
+            echo "PRs to 'main' are only allowed from 'develop' or a 'release/*' branch. This PR comes from '$HEAD_REF'."
+            exit 1
+          fi

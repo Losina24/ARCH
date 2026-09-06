@@ -80,6 +80,24 @@ describe('startDaemonServer', () => {
     socket.end();
   });
 
+  it('drops a malformed NDJSON line instead of crashing the daemon for other clients', async () => {
+    const handleRequest = vi.fn(async (method: string, payload: unknown) => ({
+      method,
+      payload,
+    }));
+    handle = await startDaemonServer(socketPath, handleRequest);
+
+    const socket = await connectSocket(socketPath);
+    socket.write('not valid json\n');
+    // A well-formed request sent right after must still be served — the malformed line must
+    // not have crashed the server or left the socket/handler in a broken state.
+    sendLine(socket, { id: 'req-1', method: 'run.list', payload: {} });
+    const response = await readOneLine(socket);
+
+    expect(response).toEqual({ id: 'req-1', result: { method: 'run.list', payload: {} } });
+    socket.end();
+  });
+
   it('broadcasts an event to every connected socket', async () => {
     const onClientCountChange = vi.fn();
     handle = await startDaemonServer(socketPath, async () => ({}), { onClientCountChange });

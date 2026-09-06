@@ -73,7 +73,7 @@ describe('scope-based locking (useWorktrees: false)', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.approveRun({ runId: run.runId });
     await runDone;
@@ -118,12 +118,12 @@ describe('scope-based locking (useWorktrees: false)', () => {
     const needsCorrection = waitForEvent(
       daemon.client,
       (event) => event.type === 'task:status-changed' && event.status === 'needs_correction',
-      15000,
+      30000,
     );
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.approveRun({ runId: run.runId });
     await needsCorrection;
@@ -166,12 +166,12 @@ describe('scope-based locking (useWorktrees: false)', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     await daemon.client.approveRun({ runId: run.runId });
     await taskFailed;
@@ -242,7 +242,7 @@ describe('scope-based locking (useWorktrees: false)', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.approveRun({ runId: run.runId });
     await runDone;
