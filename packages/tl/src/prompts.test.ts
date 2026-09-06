@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkerPrompt } from './prompts.js';
+import { buildMergeConflictCorrection, buildWorkerPrompt } from './prompts.js';
 
 describe('buildWorkerPrompt', () => {
   it('embeds the task brief when there is no correction', () => {
@@ -49,6 +49,18 @@ describe('buildWorkerPrompt', () => {
       correctionSource: 'scope',
     });
     expect(prompt).toContain('An automated scope check found file changes outside');
+    expect(prompt).not.toContain('The Architect');
+    expect(prompt).not.toContain('Team Lead');
+  });
+
+  it('attributes the correction to a merge conflict when the source is conflict', () => {
+    const prompt = buildWorkerPrompt({
+      taskId: 'TASK-001',
+      taskMarkdown: '# Task brief',
+      correctionMarkdown: buildMergeConflictCorrection('develop', ['src/index.ts']),
+      correctionSource: 'conflict',
+    });
+    expect(prompt).toContain('produced Git conflicts');
     expect(prompt).not.toContain('The Architect');
     expect(prompt).not.toContain('Team Lead');
   });
@@ -150,5 +162,21 @@ describe('buildWorkerPrompt', () => {
     });
     expect(prompt).toContain('depends on work other tasks already completed');
     expect(prompt).toContain('TASK-001');
+  });
+});
+
+describe('buildMergeConflictCorrection', () => {
+  it('lists every conflicted file and instructs the worker to keep both sides', () => {
+    const markdown = buildMergeConflictCorrection('develop', ['src/index.ts', 'README.md']);
+    expect(markdown).toContain('src/index.ts');
+    expect(markdown).toContain('README.md');
+    expect(markdown).toContain('develop');
+    expect(markdown).toContain('keep whatever must be kept from BOTH sides');
+    expect(markdown).toContain('remove every');
+  });
+
+  it('tells the worker not to run git commands itself', () => {
+    const markdown = buildMergeConflictCorrection('main', ['a.ts']);
+    expect(markdown).toContain('Do not run any');
   });
 });

@@ -1,19 +1,24 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  abortMerge,
   createWorktree,
   deleteBranch,
+  hasConflictMarkers,
+  listConflictedFiles,
   mergeDependencyBranches,
   mergeWorktree,
   removeWorktree,
+  syncWorktreeWithBase,
 } from './worktree-manager.js';
 
 describe('git worktree lifecycle', () => {
   let repo: string;
   let worktreesDir: string;
+  let baseBranch: string;
 
   beforeEach(async () => {
     repo = await mkdtemp(join(tmpdir(), 'arch-worktree-test-'));
@@ -30,6 +35,9 @@ describe('git worktree lifecycle', () => {
 
     worktreesDir = join(repo, '.worktrees');
     await mkdir(worktreesDir, { recursive: true });
+
+    const { stdout } = await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo });
+    baseBranch = stdout.trim();
   });
 
   afterEach(async () => {
@@ -187,6 +195,85 @@ describe('git worktree lifecycle', () => {
 
       await expect(readFile(join(consumer.path, 'a.ts'), 'utf-8')).resolves.toContain('a = 1');
       await expect(readFile(join(consumer.path, 'b.ts'), 'utf-8')).resolves.toContain('b = 2');
+    });
+  });
+
+  describe('syncWorktreeWithBase', () => {
+    it('merges the base branch into the worktree cleanly when nothing conflicts', async () => {
+      const handle = await createWorktree(repo, worktreesDir, 'TASK-001');
+      await writeFile(
+        join(repo, 'unrelated.txt'),
+        'landed on base while TASK-001 was running\n',
+        'utf-8',
+      );
+      await execa('git', ['add', '-A'], { cwd: repo });
+      await execa('git', ['commit', '-m', 'unrelated work on base'], { cwd: repo });
+
+      const conflicted = await syncWorktreeWithBase(handle, baseBranch);
+
+      expect(conflicted).toBeUndefined();
+      await expect(readFile(join(handle.path, 'unrelated.txt'), 'utf-8')).resolves.toContain(
+        'landed on base',
+      );
+    });
+
+    it('reports the conflicted files and leaves the worktree mid-merge when the base and the worktree touched the same lines', async () => {
+      const handle = await createWorktree(repo, worktreesDir, 'TASK-001');
+      await writeFile(join(handle.path, 'README.md'), '# TASK-001 version\n', 'utf-8');
+      await execa('git', ['add', '-A'], { cwd: handle.path });
+      await execa('git', ['commit', '-m', 'TASK-001: rewrite README'], { cwd: handle.path });
+
+      await writeFile(join(repo, 'README.md'), '# base version\n', 'utf-8');
+      await execa('git', ['add', '-A'], { cwd: repo });
+      await execa('git', ['commit', '-m', 'base: rewrite README'], { cwd: repo });
+
+      const conflicted = await syncWorktreeWithBase(handle, baseBranch);
+
+      expect(conflicted).toEqual(['README.md']);
+      const { stdout: gitDir } = await execa('git', ['rev-parse', '--git-dir'], {
+        cwd: handle.path,
+      });
+      await expect(
+        access(join(resolve(handle.path, gitDir.trim()), 'MERGE_HEAD')),
+      ).resolves.toBeUndefined();
+      await expect(hasConflictMarkers(handle.path, ['README.md'])).resolves.toBe(true);
+      await expect(listConflictedFiles(handle.path)).resolves.toEqual(['README.md']);
+    });
+
+    it('no-ops when the worktree already contains everything on the base branch', async () => {
+      const handle = await createWorktree(repo, worktreesDir, 'TASK-001');
+
+      const conflicted = await syncWorktreeWithBase(handle, baseBranch);
+
+      expect(conflicted).toBeUndefined();
+    });
+  });
+
+  describe('mergeWorktree conflict safety', () => {
+    it('aborts the merge and leaves repoRoot clean instead of throwing into a half-merged state', async () => {
+      const handle = await createWorktree(repo, worktreesDir, 'TASK-001');
+      await writeFile(join(handle.path, 'README.md'), '# TASK-001 version\n', 'utf-8');
+      await execa('git', ['add', '-A'], { cwd: handle.path });
+      await execa('git', ['commit', '-m', 'TASK-001: rewrite README'], { cwd: handle.path });
+
+      await writeFile(join(repo, 'README.md'), '# base version\n', 'utf-8');
+      await execa('git', ['add', '-A'], { cwd: repo });
+      await execa('git', ['commit', '-m', 'base: rewrite README'], { cwd: repo });
+
+      await expect(mergeWorktree(repo, handle)).rejects.toThrow(/TASK-001/);
+
+      const midMerge = await readFile(join(repo, '.git', 'MERGE_HEAD'), 'utf-8').catch(
+        () => undefined,
+      );
+      expect(midMerge).toBeUndefined();
+      const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: repo });
+      expect(status.trim()).toBe('');
+    });
+  });
+
+  describe('abortMerge', () => {
+    it('is a no-op when there is no merge in progress', async () => {
+      await expect(abortMerge(repo)).resolves.toBeUndefined();
     });
   });
 });

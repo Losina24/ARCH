@@ -1,4 +1,4 @@
-import { access, realpath } from 'node:fs/promises';
+import { access, readFile, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 
@@ -121,8 +121,80 @@ export async function createWorktree(
   return { path, branch };
 }
 
+/** Idempotent: a no-op (exit code != 0, swallowed) when there is no merge in progress. */
+export async function abortMerge(cwd: string): Promise<void> {
+  await execa('git', ['merge', '--abort'], { cwd, reject: false });
+}
+
+/** Files Git currently considers unmerged (conflict markers may or may not still be present —
+ * see hasConflictMarkers for that). Empty once nothing is mid-merge. */
+export async function listConflictedFiles(cwd: string): Promise<string[]> {
+  const { stdout } = await execa('git', ['diff', '--name-only', '--diff-filter=U'], { cwd });
+  return stdout.split('\n').filter(Boolean);
+}
+
+/**
+ * Whether any of the given files still contains Git's conflict markers. Needed because
+ * dispatchWorker stages every changed file after the Worker runs (see @losina/tl's
+ * dispatch-worker.ts), and `git add` clears a file's unmerged bit in the index the moment it's
+ * staged — regardless of whether the markers inside it were actually removed. So after a Worker
+ * dispatch, listConflictedFiles alone can no longer tell a resolved file from one the Worker just
+ * staged as-is, markers and all.
+ */
+export async function hasConflictMarkers(cwd: string, files: string[]): Promise<boolean> {
+  for (const file of files) {
+    const content = await readFile(join(cwd, file), 'utf-8').catch(() => '');
+    if (content.includes('<<<<<<< ') || content.includes('>>>>>>> ')) return true;
+  }
+  return false;
+}
+
+/**
+ * IMPORTANT safety net: repoRoot is the user's real, already-checked-out repository — this must
+ * never be left mid-merge (MERGE_HEAD present, conflict-marked files) no matter what happens. On
+ * any failure this aborts the merge in repoRoot before rethrowing, so a conflict here can only
+ * ever produce a clean failure, never a broken real repo. In the intended flow this never
+ * actually conflicts: callers first reconcile the branch against repoRoot's current state inside
+ * the disposable worktree (see syncWorktreeWithBase), so by the time this runs it's a guaranteed
+ * fast-forward.
+ */
 export async function mergeWorktree(repoRoot: string, handle: WorktreeHandle): Promise<void> {
-  await execa('git', ['merge', handle.branch], { cwd: repoRoot });
+  const result = await execa('git', ['merge', handle.branch], { cwd: repoRoot, reject: false });
+  if (result.exitCode !== 0) {
+    await abortMerge(repoRoot);
+    throw new Error(`Failed to merge ${handle.branch} into ${repoRoot}: ${result.stderr}`);
+  }
+}
+
+/**
+ * Merges repoRoot's current base branch INTO the isolated worktree — the opposite direction from
+ * mergeWorktree — so that any conflict between this task's work and everything else that has
+ * landed on the base since this worktree branched is confined to the disposable worktree, never
+ * to the user's real repository. This is exactly what a human developer does before opening a
+ * merge/pull request: pull the latest base into their own branch, resolve there, then integrate.
+ *
+ * Returns the list of conflicted files, or undefined when the merge completed cleanly (including
+ * the common case where the worktree was already up to date). Leaves the worktree mid-merge on
+ * conflict — the caller is responsible for resolving (or aborting) it.
+ */
+export async function syncWorktreeWithBase(
+  worktree: WorktreeHandle,
+  baseBranch: string,
+): Promise<string[] | undefined> {
+  const result = await execa('git', ['merge', '--no-edit', baseBranch], {
+    cwd: worktree.path,
+    reject: false,
+  });
+  if (result.exitCode === 0) return undefined;
+
+  const conflicted = await listConflictedFiles(worktree.path);
+  if (conflicted.length === 0) {
+    // Failed for some other reason (e.g. the base branch doesn't exist) — not something a
+    // correction round can fix, so don't leave the worktree mid-merge for the caller to trip on.
+    await abortMerge(worktree.path);
+    throw new Error(`Failed to merge ${baseBranch} into ${worktree.path}: ${result.stderr}`);
+  }
+  return conflicted;
 }
 
 /**
