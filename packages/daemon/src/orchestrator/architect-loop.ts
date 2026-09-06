@@ -4,8 +4,6 @@ import {
   type RunEventBus,
   loadConsultationRequest,
   loadReviewRequest,
-  loadRunSessions,
-  saveRunSessions,
   writeReviewResponse,
 } from '@losina/core';
 import type { ConsultationRequestedEvent, ReviewRequestedEvent } from '@losina/ipc';
@@ -48,7 +46,6 @@ export function summarizeActivityFailure(error: unknown): string {
 
 interface ArchitectJobContext {
   runId: string;
-  runDir: string;
   bus: RunEventBus;
   architectAgentId: string;
 }
@@ -61,14 +58,13 @@ interface ArchitectJobResult {
 }
 
 /**
- * Runs one Architect call (a review or a consultation) through the activity/session bookkeeping
- * both share: emitting `thinking`/`completed` activity around it, forwarding provider progress,
- * persisting the resumable Architect session, and surfacing `result.message` as an `agent:message`.
- * `onSuccess` handles what's specific to the job kind (writing the response file, emitting the
- * matching `*:completed` event); `onFailure` handles the kind-specific failure event(s), on top of
- * the generic `agent:activity {state:'failed'}` this always emits. Returns the new Architect
- * session id on success, or `undefined` on failure (the caller keeps its previous session id).
- * Rethrows `RunAbortedError` unchanged so the caller can stop the loop instead of logging it.
+ * Runs one Architect call (a review or a consultation) through the activity bookkeeping both
+ * share: emitting `thinking`/`completed` activity around it, forwarding provider progress, and
+ * surfacing `result.message` as an `agent:message`. `onSuccess` handles what's specific to the
+ * job kind (writing the response file, emitting the matching `*:completed` event); `onFailure`
+ * handles the kind-specific failure event(s), on top of the generic
+ * `agent:activity {state:'failed'}` this always emits. Rethrows `RunAbortedError` unchanged so
+ * the caller can stop the loop instead of logging it.
  */
 async function runArchitectJob<TRequest, TResult extends ArchitectJobResult>(
   context: ArchitectJobContext,
@@ -85,8 +81,8 @@ async function runArchitectJob<TRequest, TResult extends ArchitectJobResult>(
     onSuccess: (request: TRequest, result: TResult) => Promise<void>;
     onFailure: (error: unknown) => void;
   },
-): Promise<string | undefined> {
-  const { runId, runDir, bus, architectAgentId } = context;
+): Promise<void> {
+  const { runId, bus, architectAgentId } = context;
   const { taskId, requestPath, resumeSessionId, loadRequest, execute, onSuccess, onFailure } =
     params;
 
@@ -107,9 +103,6 @@ async function runArchitectJob<TRequest, TResult extends ArchitectJobResult>(
         activityFromProgress({ runId, agentId: architectAgentId, role: 'architect', taskId }, progress),
       ),
     );
-
-    const latest = await loadRunSessions(runDir);
-    await saveRunSessions(runDir, { ...latest, architectSessionId: result.sessionId });
 
     bus.emit({
       type: 'agent:activity',
@@ -132,11 +125,9 @@ async function runArchitectJob<TRequest, TResult extends ArchitectJobResult>(
     }
 
     await onSuccess(request, result);
-    return result.sessionId;
   } catch (error) {
     if (error instanceof RunAbortedError) throw error;
     onFailure(error);
-    return undefined;
   }
 }
 
@@ -151,7 +142,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
   const { run, runDir, config, bus, signal } = params;
   const runId = run.runId;
   const architectAgentId = `architect-${runId}`;
-  const jobContext: ArchitectJobContext = { runId, runDir, bus, architectAgentId };
+  const jobContext: ArchitectJobContext = { runId, bus, architectAgentId };
 
   const queue: ArchitectJob[] = [];
   let wake: (() => void) | undefined;
@@ -168,11 +159,15 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
     }
   });
 
-  const runReviewJob = (event: ReviewRequestedEvent, resumeSessionId: string | undefined) =>
+  const runReviewJob = (event: ReviewRequestedEvent) =>
     runArchitectJob(jobContext, {
       taskId: event.taskId,
       requestPath: event.requestPath,
-      resumeSessionId,
+      // Deliberately never resumed — every review prompt already carries the task brief, every
+      // prior correction, and the current diff, so a fresh session has everything a resumed one
+      // would have, without a run-long conversation growing across every task's reviews (and
+      // consultations too, see runConsultationJob below).
+      resumeSessionId: undefined,
       loadRequest: loadReviewRequest,
       execute: async (request, sessionId, onProgress) => {
         const review = await reviewTask({
@@ -229,14 +224,15 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
       },
     });
 
-  const runConsultationJob = (
-    event: ConsultationRequestedEvent,
-    resumeSessionId: string | undefined,
-  ) =>
+  const runConsultationJob = (event: ConsultationRequestedEvent) =>
     runArchitectJob(jobContext, {
       taskId: event.taskId,
       requestPath: event.requestPath,
-      resumeSessionId,
+      // Deliberately never resumed — see the matching comment on runReviewJob above and on the
+      // Worker dispatch in tl-loop.ts. The consultation prompt already carries the task brief,
+      // every prior correction, the diff, and exactly why the deterministic rules gave up, so a
+      // fresh session has everything a resumed one would have.
+      resumeSessionId: undefined,
       loadRequest: loadConsultationRequest,
       execute: async (request, sessionId, onProgress) => {
         const result = await consultStuckTask({
@@ -299,9 +295,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
     });
 
   const loop = (async () => {
-    const initialSessions = await loadRunSessions(runDir);
-    let architectSessionId = initialSessions.architectSessionId;
-
     while (!stopped) {
       if (signal.aborted) return;
 
@@ -314,11 +307,11 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
       }
 
       try {
-        const newSessionId =
-          next.kind === 'review'
-            ? await runReviewJob(next.event, architectSessionId)
-            : await runConsultationJob(next.event, architectSessionId);
-        architectSessionId = newSessionId ?? architectSessionId;
+        if (next.kind === 'review') {
+          await runReviewJob(next.event);
+        } else {
+          await runConsultationJob(next.event);
+        }
       } catch (error) {
         if (error instanceof RunAbortedError) return;
         throw error;

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- The Worker and the Architect no longer resume their model session between correction rounds: every worker dispatch (a task's first attempt or any later correction) and every Architect review now start a fresh session instead of replaying the prior conversation. Nothing is lost by this — the correction prompt already carries the full history of prior corrections plus the current diff, and the review prompt already carries the task brief, every prior correction, and the diff — so a fresh session has everything a resumed one would have had, without a task's or a run's accumulated conversation growing without bound across many correction/review rounds.
+
 ### Fixed
 - The Architect's review call now actually receives `dependencyScopes`: `tl-loop.ts` already computed and persisted them on the review request, and `reviewTask` already accepted and used them to warn about paths owned by a dependency, but the review branch of the Architect loop dropped the field when forwarding the loaded request — a review never saw a task's dependency scope. Introduced when the dependency-context and architect-consultation branches were merged, and missed because only the consultation branch was checked at the time (see the `dependencyScopes` merge-artifact fix above). — @Losina24
 - A crashed Architect review once again reports its real failure reason (e.g. `ENAMETOOLONG: prompt too large for argv`) instead of a generic "no detail available": the review branch's failure handler stopped attaching `summarizeActivityFailure(error)` to its `agent:activity` event somewhere between that feature landing and the architect-consultation merge, while the consultation branch kept it — so a review crash's real cause silently regressed to the same generic message the feature had originally fixed. — @Losina24
