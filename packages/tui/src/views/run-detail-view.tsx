@@ -3,7 +3,7 @@ import type { ArchClient } from '@losina/daemon-client';
 import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@losina/schemas';
 import { Box, type DOMElement, Text, measureElement, useInput } from 'ink';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { deriveAgentStatuses } from '../agent-status.js';
 import { type SlashCommand, isCommand, matchCommands } from '../commands.js';
 import { type CommandHint, CommandHints } from '../components/command-hints.js';
@@ -383,15 +383,20 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       });
   }, [client, run.runId]);
 
-  const architectEvents = events.filter(
-    (event): event is AgentActivityEvent =>
-      event.type === 'agent:activity' && event.role === 'architect',
-  );
-  const latestArchitectEvent = architectEvents[architectEvents.length - 1];
+  // Both are full passes over the run's whole event history — memoized so a re-render that has
+  // nothing to do with new events (typing in the chat box being the notable case: every keystroke
+  // re-renders this view) doesn't redo them from scratch.
+  const latestArchitectEvent = useMemo(() => {
+    const architectEvents = events.filter(
+      (event): event is AgentActivityEvent =>
+        event.type === 'agent:activity' && event.role === 'architect',
+    );
+    return architectEvents[architectEvents.length - 1];
+  }, [events]);
   const architectFailed = latestArchitectEvent?.state === 'failed';
   const waitingForArchitect = run.phase === 'definition' && !architectFailed && (!plan || revising);
 
-  const agents = deriveAgentStatuses(events);
+  const agents = useMemo(() => deriveAgentStatuses(events), [events]);
 
   useEffect(() => {
     setSelectedAgentIndex((index) => Math.min(index, Math.max(0, agents.length - 1)));
@@ -688,7 +693,11 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     (liveOpenTask === null && tab === 'agents') ||
     (liveOpenTask === null && tab === 'chat');
 
-  const reportScrollMetrics = (metrics: ScrollMetrics) => {
+  // Stable on purpose (only reads/writes state setters and a ref, none of which ever change) —
+  // passed as `onScrollMetrics` to every tab panel below, and ChatPanel is memoized specifically
+  // so it can skip re-rendering while typing; a fresh function reference here every render would
+  // silently defeat that.
+  const reportScrollMetrics = useCallback((metrics: ScrollMetrics) => {
     const normalized = {
       contentHeight: Math.max(0, metrics.contentHeight),
       viewportHeight: Math.max(1, metrics.viewportHeight),
@@ -703,7 +712,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     setScrollOffset((offset) =>
       followScrollTailRef.current ? nextMaxOffset : Math.min(offset, nextMaxOffset),
     );
-  };
+  }, []);
 
   useEffect(() => {
     setScrollOffset((offset) => Math.min(offset, maxScrollOffset));

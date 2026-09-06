@@ -5,6 +5,7 @@ import type {
   TaskStatusChangedEvent,
 } from '@losina/ipc';
 import { Box, Text } from 'ink';
+import { useMemo } from 'react';
 import { formatTime, taskStatusLogText, taskStatusLogTone } from '../activity-log.js';
 import { agentRoleColor } from '../agent-status.js';
 import { ACTIVITY_HEADLINE, EMPHASIS, ERROR, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
@@ -271,7 +272,17 @@ export function AgentTranscript({
   width = DEFAULT_WIDTH,
   attribution,
 }: AgentTranscriptProps) {
-  const entries = buildEntries(events, agentIds, taskIds);
+  // agentIds/taskIds are usually built fresh (map/literal) by every caller on every one of their
+  // own renders, so memoizing on the arrays themselves would never hit — a stable string key of
+  // their contents is what actually lets this skip the full O(events) rescan on an unrelated
+  // re-render (e.g. this run's chat box on every keystroke, see run-detail-view.tsx).
+  const agentIdsKey = agentIds.join('|');
+  const taskIdsKey = (taskIds ?? []).join('|');
+  const entries = useMemo(
+    () => buildEntries(events, agentIds, taskIds),
+    // biome-ignore lint/correctness/useExhaustiveDependencies: agentIdsKey/taskIdsKey are the real dependency (stable content, not array identity) — agentIds/taskIds themselves are read inside buildEntries via the closure, not tracked here on purpose.
+    [events, agentIdsKey, taskIdsKey],
+  );
 
   if (entries.length === 0) {
     return <Text dimColor>{emptyMessage}</Text>;
