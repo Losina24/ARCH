@@ -10,6 +10,8 @@ export interface RunHeadlessOptions {
   resumeSessionId?: string;
   permissionMode?: PermissionMode;
   signal?: AbortSignal;
+  /** Optional hard subprocess limit. Omitted in production so active long-running turns can finish. */
+  timeoutMs?: number;
   /** Receives each `stream-json` event as soon as Claude Code writes its JSONL line. */
   onEvent?: (event: ClaudeJsonlEvent) => void;
   /** Extra directories the session may read/write outside `cwd` (one `--add-dir` per entry). */
@@ -94,10 +96,22 @@ export class ClaudeCliExecutionError extends Error {
   }
 }
 
+/** The CLI exceeded an explicitly configured hard execution boundary and was terminated. */
+export class ClaudeTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Claude CLI timed out after ${Math.round(timeoutMs / 60_000)} minutes.`);
+    this.name = 'ClaudeTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 interface ExecaLikeError {
   stdout?: unknown;
   exitCode?: number;
   signal?: string;
+  timedOut?: boolean;
 }
 
 // execa always attaches `stdout` to the error it throws for a failure that actually spawned a
@@ -239,7 +253,14 @@ function toGenericExecutionError(error: unknown): ClaudeCliExecutionError | null
   );
 }
 
+function toTimeout(error: unknown, timeoutMs: number | undefined): ClaudeTimeoutError | null {
+  return timeoutMs !== undefined && isExecaLikeError(error) && error.timedOut === true
+    ? new ClaudeTimeoutError(timeoutMs)
+    : null;
+}
+
 export async function runClaudeHeadless(options: RunHeadlessOptions): Promise<RunHeadlessResult> {
+  const timeoutMs = options.timeoutMs;
   const args = [
     '-p',
     '--model',
@@ -279,6 +300,7 @@ export async function runClaudeHeadless(options: RunHeadlessOptions): Promise<Ru
       cwd: options.cwd,
       cancelSignal: options.signal,
       input: options.prompt,
+      ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
     });
     observingLiveStream = observeJsonlEvents(
       (subprocess as unknown as { stdout?: unknown }).stdout,
@@ -291,7 +313,11 @@ export async function runClaudeHeadless(options: RunHeadlessOptions): Promise<Ru
       replayEvents(error.stdout, options.onEvent);
     const parsed = isExecaLikeError(error) ? resultEventOf(parseJsonlEvents(error.stdout)) : null;
     throw (
-      toApiRejection(parsed) ?? toStreamAbort(parsed) ?? toGenericExecutionError(error) ?? error
+      toTimeout(error, timeoutMs) ??
+      toApiRejection(parsed) ??
+      toStreamAbort(parsed) ??
+      toGenericExecutionError(error) ??
+      error
     );
   }
 

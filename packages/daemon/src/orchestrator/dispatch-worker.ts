@@ -1,7 +1,7 @@
 import { type AgentProgressEvent, runAgentHeadless } from '@losina/agent-runtime';
 import { type WorktreeHandle, getStagedFiles, stageAll } from '@losina/core';
 import type { Task } from '@losina/schemas';
-import { type CorrectionSource, type DependencyBrief, buildWorkerPrompt } from './prompts.js';
+import { type CorrectionSource, type DependencyBrief, buildWorkerPrompt } from './worker-prompts.js';
 
 export interface DispatchWorkerInput {
   task: Task;

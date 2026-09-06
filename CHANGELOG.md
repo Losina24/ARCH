@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The daemon no longer crashes on an unhandled promise rejection from an in-flight agent call; it's now caught and turned into a `failed` task/run outcome instead of taking down the whole process. — @alosa
+- `architect-loop.ts`'s consultation job no longer passes a `dependencyScopes` field to `consultStuckTask` — that field only ever existed on the review flow (`ReviewRequest`/`reviewTask`); it leaked into the consultation call as a merge artifact when `develop`'s dependency-context work and the architect-consultation branch were combined, and failed to build. — @alosa
+- `worker-prompts.test.ts`'s two correction-attribution tests (`checks`/`scope` sources) now call `buildWorkerPrompt` with its actual object-shaped input instead of long-obsolete positional arguments — another merge artifact, from combining the Team Lead removal (which branched before `buildWorkerPrompt` moved to an options object) with `develop`. — @alosa
+
+### Changed
+- `timeoutMs` is now a single config value honored consistently by all three agent runtimes (`claude-runtime`, `codex-runtime`, `opencode-runtime`) instead of each one defining its own default/behavior. — @alosa
+- Deduplicated repeated logic in the orchestrator: `attributeFilesToTask` in `tl-loop.ts` now backs both call sites that were filtering a task's changed files by other tasks' scope, and `runArchitectJob` in `architect-loop.ts` is now the single generic helper backing both the review and consultation job branches of the Architect's queue loop. — @alosa
+- `packages/tl` (the deterministic task-cycle orchestration package) has been merged into `packages/daemon/src/orchestrator/`, since `@losina/daemon` was its only real consumer. The monorepo now builds 15 packages instead of 16; `README.md` updated accordingly. — @alosa
+
 ### Added
 
 - When a task exhausts its retries or crashes into `awaiting_human`/`failed`, the Architect is now consulted before the human is: it's shown the task brief, prior corrections, the worker's diff, and exactly why the deterministic rules gave up, and gets one chance to turn that into a short, human-facing question with a concrete recommended answer. This is best-effort and purely additive — a consultation can never change the task's own outcome (it's queued and resolved after the task is already finalized), and if it fails or times out the task still fails/pauses exactly as before, just without a question attached. There's no TUI surface for it yet in this change (that's next); for now the question shows up as an `agent:message` on the Architect's transcript, and a human can act on it via the existing `arch retry-task` — the reply is threaded straight into the Worker's next attempt, unchanged, with no second Architect call in between.

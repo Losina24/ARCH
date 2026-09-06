@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkerPrompt } from './prompts.js';
+import { buildWorkerPrompt } from './worker-prompts.js';
 
 describe('buildWorkerPrompt', () => {
   it('embeds the task brief when there is no correction', () => {
@@ -30,24 +30,24 @@ describe('buildWorkerPrompt', () => {
   });
 
   it('attributes the correction to the automated checks when the source is checks', () => {
-    const prompt = buildWorkerPrompt(
-      '# Task brief',
-      'The build check failed.',
-      undefined,
-      'checks',
-    );
+    const prompt = buildWorkerPrompt({
+      taskId: 'TASK-001',
+      taskMarkdown: '# Task brief',
+      correctionMarkdown: 'The build check failed.',
+      correctionSource: 'checks',
+    });
     expect(prompt).toContain("This task's automated checks were run");
     expect(prompt).not.toContain('The Architect');
     expect(prompt).not.toContain('Team Lead');
   });
 
   it('attributes the correction to an automated scope check when the source is scope', () => {
-    const prompt = buildWorkerPrompt(
-      '# Task brief',
-      'You changed a file outside your scope.',
-      undefined,
-      'scope',
-    );
+    const prompt = buildWorkerPrompt({
+      taskId: 'TASK-001',
+      taskMarkdown: '# Task brief',
+      correctionMarkdown: 'You changed a file outside your scope.',
+      correctionSource: 'scope',
+    });
     expect(prompt).toContain('An automated scope check found file changes outside');
     expect(prompt).not.toContain('The Architect');
     expect(prompt).not.toContain('Team Lead');

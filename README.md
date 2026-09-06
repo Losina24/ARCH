@@ -52,9 +52,9 @@ or resumed at any time, even after the daemon restarts.
 | **Worker** | Implements one task inside its own git worktree, on its own branch, with a resumable Claude session so correction feedback can be applied incrementally. |
 
 These are the only two LLM-backed roles in ARCH. Around each Worker dispatch, a deterministic
-task-cycle orchestrator (`packages/tl`) — no model calls of its own — handles worktree lifecycle,
-git mutex serialization, running the task's automated checks, scope enforcement, retry budgeting,
-and protected-branch commit/merge safety.
+task-cycle orchestrator (`packages/daemon/src/orchestrator/tl-loop.ts`) — no model calls of its own
+— handles worktree lifecycle, git mutex serialization, running the task's automated checks, scope
+enforcement, retry budgeting, and protected-branch commit/merge safety.
 
 Architect and Worker calls go through `runClaudeHeadless` (`@losina/claude-runtime`) — the single
 integration point with the `claude` CLI, invoked with `--print`/headless flags and (when
@@ -86,9 +86,8 @@ packages/
 ├── opencode-runtime/  # Headless invocation of the OpenCode CLI
 ├── validator/         # Runs a task's automated checks and builds correction feedback from failures
 ├── architect/         # Architect agent: prompts, plan-project, review-task, consult-stuck-task
-├── tl/                # Deterministic task-cycle orchestration: dispatch-worker, process-worker-report
 ├── ipc/               # Message types exchanged between the daemon and its clients
-├── daemon/            # Orchestrator: definition/implementation phases, cascade-fail, mutex, persistence
+├── daemon/            # Orchestrator: task-cycle (dispatch-worker, process-worker-report), definition/implementation phases, cascade-fail, mutex, persistence
 ├── daemon-client/     # IPC client over the socket/pipe + auto-start of the daemon (ensureDaemon)
 ├── cli/               # `archctl` — Commander-based CLI
 ├── tui/               # `arch-terminal` — Ink/React terminal UI
@@ -161,7 +160,7 @@ pnpm install
 pnpm build
 ```
 
-This compiles all 16 packages of the monorepo (via Turborepo) and produces the `archctl` and
+This compiles all 15 packages of the monorepo (via Turborepo) and produces the `archctl` and
 `arch-terminal` executables. To use them outside of this repository, link them globally:
 
 ```bash
