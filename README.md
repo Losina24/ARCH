@@ -1,10 +1,11 @@
 # ARCH
 
 ARCH is a multi-agent orchestration framework that automates the software development cycle
-starting from a natural-language user story or task. ARCH coordinates three tiers of
-agents — **Architect**, **TL**, and **Worker** — that drive headless instances of the
-[Claude Code](https://claude.com/claude-code) CLI (`claude -p`) to plan, implement, and review
-work autonomously, directly on your own git repository.
+starting from a natural-language user story or task. ARCH coordinates two agents — **Architect**
+and **Worker** — that drive headless instances of the [Claude Code](https://claude.com/claude-code)
+CLI (`claude -p`) to plan, implement, and review work autonomously, directly on your own git
+repository. A deterministic task-cycle orchestrator (worktree lifecycle, automated checks, retry
+budgeting, merge safety) coordinates each task's execution around the single Worker dispatch call.
 
 It ships with a CLI (`archctl`) and a terminal UI (`arch-terminal`) for launching and supervising runs.
 
@@ -21,7 +22,7 @@ Work is organized into **runs**. Each run moves through two phases:
 
    ```
    Worker implements the task in an isolated git worktree/branch
-     → TL runs the task's automated checks (build, tests, lint — whatever the task defines)
+     → the orchestrator runs the task's automated checks (build, tests, lint — whatever the task defines)
        → Architect reviews the resulting diff
          → approved  → merge into the base branch, commit, task done
          → rejected  → correction feedback sent back to the Worker, up to maxRetries
@@ -30,6 +31,12 @@ Work is organized into **runs**. Each run moves through two phases:
    If a task exhausts its retries it is marked `failed`, and every task that (transitively)
    depends on it is cascade-failed without ever being dispatched. A run can also be aborted at
    any point; in-flight agent calls are cancelled and their tasks are marked `failed`.
+
+   Whenever a task gives up — retries exhausted, or a crash into `failed`/`awaiting_human` — the
+   Architect gets one best-effort chance to turn the task brief, prior corrections, the Worker's
+   diff, and the reason the deterministic rules gave up into a short, human-facing question with a
+   recommended answer, surfaced as a message on its transcript. This is purely additive: it never
+   changes the task's own outcome, and a human can still act directly via `archctl retry-task`.
 
 All state for a run — the plan, per-agent Claude session ids (so work can be resumed), and task
 metadata — is persisted under `.arch/` inside the *target* repository, so a run can be inspected
@@ -41,9 +48,13 @@ or resumed at any time, even after the daemon restarts.
 
 | Agent | Responsibility |
 |---|---|
-| **Architect** | Turns a prompt into a plan (`definition` phase) and, later, performs the semantic code review of each task's diff before it can be merged. Can also revise a plan on request (`refine`). |
-| **Team Lead (TL)** | Coordinates a single task's execution: dispatches the Worker, then runs the task's automated checks against the Worker's changes and reports pass/fail back to the daemon. |
+| **Architect** | Turns a prompt into a plan (`definition` phase) and, later, performs the semantic code review of each task's diff before it can be merged. Can also revise a plan on request (`refine`), and gets consulted for a human-facing question when a task gives up. |
 | **Worker** | Implements one task inside its own git worktree, on its own branch, with a resumable Claude session so correction feedback can be applied incrementally. |
+
+These are the only two LLM-backed roles in ARCH. Around each Worker dispatch, a deterministic
+task-cycle orchestrator (`packages/tl`) — no model calls of its own — handles worktree lifecycle,
+git mutex serialization, running the task's automated checks, scope enforcement, retry budgeting,
+and protected-branch commit/merge safety.
 
 Architect and Worker calls go through `runClaudeHeadless` (`@losina/claude-runtime`) — the single
 integration point with the `claude` CLI, invoked with `--print`/headless flags and (when
@@ -66,25 +77,29 @@ blocked → failed   (cascade: any dependency of a failed task)
 
 ```
 packages/
-├── schemas/         # Shared Zod schemas: Task, RunPlan, RunMeta, CheckDefinition, RunSessions...
-├── config/          # Loading/saving .agentmeshrc.json and resolving .arch/ paths
-├── core/            # DAG helpers (topo-sort, ready-tasks), git (diff, worktrees), session/checkpoint state
-├── claude-runtime/  # Headless invocation of the `claude` CLI (execa) + model alias registry
-├── validator/       # Runs a task's automated checks and builds correction feedback from failures
-├── architect/       # Architect agent: prompts, plan-project, review-task
-├── tl/               # TL agent: prompts, dispatch-worker, process-worker-report
-├── ipc/              # Message types exchanged between the daemon and its clients
-├── daemon/           # Orchestrator: definition/implementation phases, cascade-fail, mutex, persistence
-├── daemon-client/    # IPC client over the Unix socket + auto-start of the daemon (ensureDaemon)
-├── cli/              # `archctl` — Commander-based CLI
-├── tui/              # `arch-terminal` — Ink/React terminal UI
-└── e2e/              # End-to-end tests: real daemon + real git worktrees, Claude CLI mocked
+├── schemas/           # Shared Zod schemas: Task, RunPlan, RunMeta, CheckDefinition, RunSessions...
+├── config/            # Loading/saving .agentmeshrc.json and resolving .arch/ paths
+├── core/              # DAG helpers (topo-sort, ready-tasks), git (diff, worktrees), session/checkpoint state
+├── agent-runtime/     # Provider-neutral agent progress normalization, shared by every *-runtime package
+├── claude-runtime/    # Headless invocation of the `claude` CLI (execa) + model alias registry
+├── codex-runtime/     # Headless invocation of the Codex CLI
+├── opencode-runtime/  # Headless invocation of the OpenCode CLI
+├── validator/         # Runs a task's automated checks and builds correction feedback from failures
+├── architect/         # Architect agent: prompts, plan-project, review-task, consult-stuck-task
+├── tl/                # Deterministic task-cycle orchestration: dispatch-worker, process-worker-report
+├── ipc/               # Message types exchanged between the daemon and its clients
+├── daemon/            # Orchestrator: definition/implementation phases, cascade-fail, mutex, persistence
+├── daemon-client/     # IPC client over the socket/pipe + auto-start of the daemon (ensureDaemon)
+├── cli/               # `archctl` — Commander-based CLI
+├── tui/               # `arch-terminal` — Ink/React terminal UI
+└── e2e/               # End-to-end tests: real daemon + real git worktrees, Claude CLI mocked
 ```
 
-The daemon talks to the CLI and the TUI over a Unix domain socket (`.arch/daemon.sock`) using a
-newline-delimited JSON protocol. Neither client starts the daemon manually — `ensureDaemon` spawns
-it as a detached background process the first time it's needed for a given directory, and later
-invocations reuse that same instance as long as the socket is alive.
+The daemon talks to the CLI and the TUI over a local IPC channel — a Unix domain socket
+(`.arch/daemon.sock`) on macOS/Linux, a named pipe (`\\.\pipe\arch-<hash>`) on native Windows —
+using a newline-delimited JSON protocol. Neither client starts the daemon manually —
+`ensureDaemon` spawns it as a detached background process the first time it's needed for a given
+directory, and later invocations reuse that same instance as long as the channel is alive.
 
 ## Requirements
 
@@ -146,7 +161,7 @@ pnpm install
 pnpm build
 ```
 
-This compiles all 13 packages of the monorepo (via Turborepo) and produces the `archctl` and
+This compiles all 16 packages of the monorepo (via Turborepo) and produces the `archctl` and
 `arch-terminal` executables. To use them outside of this repository, link them globally:
 
 ```bash
@@ -213,7 +228,7 @@ archctl daemon-status
 
 # Configuration (per-agent models, concurrency, retries)
 archctl config get
-archctl config set --architect-model claude-opus-5 --tl-model claude-sonnet-5 \
+archctl config set --architect-model claude-opus-5 \
   --worker-model claude-sonnet-5 --max-concurrency 4 --max-retries 3
 ```
 
@@ -226,7 +241,6 @@ missing, these defaults apply (see [`.agentmeshrc.example.json`](.agentmeshrc.ex
 {
   "models": {
     "architectModel": "claude-opus-5",
-    "tlModel": "claude-sonnet-5",
     "workerModel": "claude-sonnet-5"
   },
   "execution": {
@@ -243,7 +257,7 @@ committed — it's already listed in `.gitignore`:
 
 ```
 .arch/
-├── daemon.sock       # Unix socket the daemon listens on
+├── daemon.sock       # Unix socket the daemon listens on (named pipe on Windows — no on-disk file)
 ├── daemon.log        # stdout/stderr of the detached daemon process
 └── runs/<runId>/
     ├── meta.json       # RunMeta (phase, timestamps...)
