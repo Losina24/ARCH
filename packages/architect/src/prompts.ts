@@ -1,4 +1,4 @@
-import type { ConsultationFailureKind, RunMeta } from '@losina/schemas';
+import type { ConsultationFailureKind, RunMeta, RunPlan } from '@losina/schemas';
 
 const TASKS_INDEX_SCHEMA = `tasks:
   - id: TASK-001            # stable id, format TASK-NNN
@@ -259,4 +259,51 @@ ${failureReason}
 Decide what to ask the human. The human's reply is passed VERBATIM to the Worker as its note for the next attempt — no agent rewrites it. So ask for the one decision or piece of information you actually need, phrase it so someone who cannot see this repository's internals can answer it, and make "recommendation" the concrete instruction you would send the Worker yourself if the human just pressed Enter.
 
 Write your question to exactly this path: "${consultationFilePath}" as JSON matching this schema: {"question": string, "recommendation": string}. Then end your final message with exactly one line: CONSULTATION_READY`;
+}
+
+interface ChatPromptInput {
+  run: RunMeta;
+  plan: RunPlan | null;
+  message: string;
+}
+
+function formatChatPlanSummary(plan: RunPlan | null): string {
+  if (!plan) {
+    return 'The project is still being defined — there is no approved plan or task list yet.';
+  }
+  const taskLines = plan.tasksIndex.tasks
+    .map((task) => `- ${task.id} (${task.status}): ${task.title}`)
+    .join('\n');
+  return `Project brief:
+"""
+${plan.projectMarkdown}
+"""
+
+Current tasks:
+${taskLines || '(no tasks yet)'}`;
+}
+
+/**
+ * A one-shot turn in an ongoing conversation with the human who requested this run — unlike
+ * review/consultation, this is genuinely resumed session-to-session (see chatSessionId in
+ * RunSessionsSchema), so there is no history to repeat here: the provider's own session already
+ * remembers every prior turn, exactly like a Claude Code session does.
+ */
+export function buildChatPrompt(input: ChatPromptInput): string {
+  const { run, plan, message } = input;
+  return `You are the ARCHITECT agent of ARCH, an autonomous multi-agent software engineering system. You are having an ongoing conversation with the human who requested this run — this is not a new request, just a question or comment about the run in progress. You must NOT edit, create, or delete any file; this is a read-only conversation. You may explore the repository (read files, run read-only commands) to answer accurately.
+
+Original request for this run:
+"""
+${run.prompt}
+"""
+
+${formatChatPlanSummary(plan)}
+
+The human's message:
+"""
+${message}
+"""
+
+Reply directly and conversationally, as yourself. Do not write to any file, and do not end your message with any special sentinel line — your reply text is delivered to the human as-is.`;
 }

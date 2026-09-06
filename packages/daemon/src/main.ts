@@ -1,14 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
+import { chatWithArchitect } from '@losina/architect';
 import { getArchPaths, loadConfig, saveConfig } from '@losina/config';
-import { loadRunSessions, loadTasksIndex, saveTasksIndex, workerAgentId } from '@losina/core';
+import {
+  architectAgentId,
+  loadRunPlan,
+  loadRunSessions,
+  loadTasksIndex,
+  saveRunSessions,
+  saveTasksIndex,
+  workerAgentId,
+} from '@losina/core';
 import type {
   ArchMeshEvent,
   ConfigSetRequest,
   RunAbortRequest,
   RunAnswerGrillingQuestionRequest,
   RunApproveRequest,
+  RunChatRequest,
   RunCreateRequest,
   RunDeleteRequest,
   RunDismissConsultationRequest,
@@ -56,17 +66,7 @@ async function createRun(
 }
 
 async function getRunPlan(archDir: string, runId: string): Promise<RunPlan | null> {
-  const runDir = getRunDir(archDir, runId);
-  try {
-    const [projectMarkdown, tasksIndex] = await Promise.all([
-      readFile(join(runDir, 'project.md'), 'utf-8'),
-      loadTasksIndex(join(runDir, 'tasks-index.yaml')),
-    ]);
-    return { projectMarkdown, tasksIndex };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
+  return loadRunPlan(getRunDir(archDir, runId));
 }
 
 async function getTaskFile(archDir: string, runId: string, file: string): Promise<string | null> {
@@ -348,6 +348,67 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
     );
   };
 
+  // One-shot path for run.chat when no Architect loop is alive for this run (any phase other
+  // than 'implementation' — see the run.chat case below for the live-bus path used there
+  // instead). Calqued on triggerDefinitionPhase/triggerGrillingPhase, but there is no phase
+  // object to hand off to: this calls chatWithArchitect directly and broadcasts its own result.
+  const triggerChatPhase = (runId: string, message: string) => {
+    trackPhase(
+      (async () => {
+        const run = runManager.get(runId);
+        if (!run) return;
+        const runDir = getRunDir(archDir, runId);
+        const id = architectAgentId(runId);
+
+        runManager.beginChat();
+        try {
+          const config = await loadConfig(cwd);
+          const [plan, sessions] = await Promise.all([loadRunPlan(runDir), loadRunSessions(runDir)]);
+
+          handle.broadcast({ type: 'agent:activity', runId, agentId: id, role: 'architect', state: 'thinking' });
+
+          const result = await chatWithArchitect({
+            run,
+            plan,
+            message,
+            model: config.models.architectModel,
+            resumeSessionId: sessions.chatSessionId,
+          });
+
+          await saveRunSessions(runDir, { ...sessions, chatSessionId: result.sessionId });
+
+          handle.broadcast({ type: 'agent:activity', runId, agentId: id, role: 'architect', state: 'completed' });
+          handle.broadcast({
+            type: 'agent:message',
+            runId,
+            agentId: id,
+            role: 'architect',
+            text: result.reply,
+          });
+        } catch (error) {
+          console.error(`[daemon] chat failed for run ${runId}:`, error);
+          handle.broadcast({
+            type: 'agent:activity',
+            runId,
+            agentId: id,
+            role: 'architect',
+            state: 'failed',
+          });
+          handle.broadcast({
+            type: 'agent:message',
+            runId,
+            agentId: id,
+            role: 'architect',
+            text: `Sorry, something went wrong answering that: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        } finally {
+          runManager.endChat();
+          maybeScheduleIdleShutdown();
+        }
+      })(),
+    );
+  };
+
   const triggerImplementationPhase = (
     runId: string,
     signal: AbortSignal,
@@ -449,6 +510,29 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
             throw new Error(`Run ${runId} is not in the definition phase`);
           }
           triggerDefinitionPhase(runId, feedback);
+          return run;
+        }
+        case 'run.chat': {
+          const { runId, message } = payload as RunChatRequest;
+          const run = runManager.get(runId);
+          if (!run) throw new Error(`Run not found: ${runId}`);
+
+          handle.broadcast({
+            type: 'human:prompt-sent',
+            runId,
+            agentId: architectAgentId(runId),
+            text: message,
+          });
+
+          // While the Architect's own loop is alive (implementation phase), hand the message to
+          // it directly — same session continuity, same FIFO queue as review/consultation —
+          // instead of the one-shot path below, which is for every other phase.
+          const bus = runManager.getEventBus(runId);
+          if (bus) {
+            bus.emit({ type: 'chat:requested', runId, message });
+          } else {
+            triggerChatPhase(runId, message);
+          }
           return run;
         }
         case 'run.approve': {

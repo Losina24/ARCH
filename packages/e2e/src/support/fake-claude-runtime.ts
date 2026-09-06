@@ -26,6 +26,7 @@ export type WorkerHandler = (
   options: RunHeadlessOptions,
   // biome-ignore lint/suspicious/noConfusingVoidType: sync/async handlers may legitimately return nothing
 ) => Promise<string | undefined> | void | string;
+
 export type ReviewVerdictSpec =
   | 'approve'
   | { correctionMarkdown: string }
@@ -35,6 +36,8 @@ export type ReviewVerdictSpec =
   | { crash: string };
 export type ConsultationVerdictSpec =
   | { question: string; recommendation: string }
+  /** Simulates the consultation call itself crashing — mirrors ReviewVerdictSpec's own 'crash'
+   * member above. */
   | { crash: string };
 
 // Paths embedded in real prompts come from `path.join`, so on Windows they're
@@ -42,12 +45,13 @@ export type ConsultationVerdictSpec =
 const RUN_ID_PATTERN = /[/\\]runs[/\\]([^/\\]+)[/\\]/;
 const REVIEW_TASK_ID_PATTERN = /implementing task\s+"([^"]+)"/;
 const CORRECTION_FILE_PATTERN = /exactly this path: "([^"]+)"/;
+const CONSULTATION_TASK_ID_PATTERN = /Stuck task: (\S+)/;
+const CONSULTATION_FILE_PATTERN = /Write your question to exactly this path: "([^"]+)"/;
+
 // Matches buildWorkerPrompt's own self-identification line — tried before the cwd/prompt-scan
 // fallback in resolveWorkerTaskId. Deliberately distinct wording from REVIEW_TASK_ID_PATTERN so
 // the two never collide.
 const WORKER_TASK_ID_PATTERN = /Task under implementation: (\S+)/;
-const CONSULTATION_TASK_ID_PATTERN = /Stuck task: (\S+)/;
-const CONSULTATION_FILE_PATTERN = /Write your question to exactly this path: "([^"]+)"/;
 
 function extractRunId(prompt: string): string {
   const match = RUN_ID_PATTERN.exec(prompt);
@@ -91,6 +95,9 @@ export class FakeClaudeRuntime {
   private readonly consultationCalls = new Map<string, number>();
   private readonly consultationPrompts = new Map<string, string>();
   private readonly reviewResumeSessionIds = new Map<string, Array<string | undefined>>();
+  private readonly chatReplyQueue: string[] = [];
+  private readonly chatCallLog: { prompt: string; resumeSessionId?: string; sessionId: string }[] =
+    [];
 
   queuePlan(spec: PlanSpec): void {
     this.planQueue.push(spec);
@@ -139,6 +146,30 @@ export class FakeClaudeRuntime {
     return this.consultationPrompts.get(taskId);
   }
 
+  /** A returned string becomes that call's reply; omitted calls default to 'Understood.' */
+  queueChatReply(reply: string): void {
+    this.chatReplyQueue.push(reply);
+  }
+
+  chatCallCount(): number {
+    return this.chatCallLog.length;
+  }
+
+  lastChatPrompt(): string | undefined {
+    return this.chatCallLog.at(-1)?.prompt;
+  }
+
+  /** The resumeSessionId this chat call was actually dispatched with (undefined for the first). */
+  chatResumeSessionIdAt(index: number): string | undefined {
+    return this.chatCallLog[index]?.resumeSessionId;
+  }
+
+  /** The (fake) sessionId this chat call resolved with — the next call's continuity is proven by
+   * checking its resumeSessionId against this. */
+  chatSessionIdAt(index: number): string | undefined {
+    return this.chatCallLog[index]?.sessionId;
+  }
+
   async handle(options: RunHeadlessOptions): Promise<RunHeadlessResult> {
     const sessionId = randomUUID();
 
@@ -162,8 +193,24 @@ export class FakeClaudeRuntime {
       return { sessionId, output };
     }
 
+    // buildChatPrompt has no output sentinel (the reply is the raw text), so detection matches
+    // its own distinctive role preamble instead of an instructed final line.
+    if (options.prompt.includes('ongoing conversation with the human')) {
+      const output = this.handleChat(options, sessionId);
+      return { sessionId, output };
+    }
+
     const output = await this.runWorker(options);
     return { sessionId, output };
+  }
+
+  private handleChat(options: RunHeadlessOptions, sessionId: string): string {
+    this.chatCallLog.push({
+      prompt: options.prompt,
+      resumeSessionId: options.resumeSessionId,
+      sessionId,
+    });
+    return this.chatReplyQueue.shift() ?? 'Understood.';
   }
 
   private async writePlan(options: RunHeadlessOptions): Promise<void> {

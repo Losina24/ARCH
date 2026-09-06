@@ -1,3 +1,4 @@
+import { architectAgentId } from '@losina/core';
 import type { ArchClient } from '@losina/daemon-client';
 import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@losina/schemas';
@@ -17,6 +18,7 @@ import {
   ArchitectConversationInput,
   type ConversationMode,
 } from '../panels/architect-conversation-input.js';
+import { ChatPanel } from '../panels/chat-panel.js';
 import { ConsolePanel } from '../panels/console-panel.js';
 import { ConsultationPanel } from '../panels/consultation-panel.js';
 import { ExecutionPanel } from '../panels/execution-panel.js';
@@ -25,7 +27,7 @@ import { PlanificationPanel } from '../panels/planification-panel.js';
 import { TaskDetailPanel } from '../panels/task-detail-panel.js';
 import { ERROR, INACTIVE, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
 
-const TABS = ['planification', 'overview', 'agents', 'console'] as const;
+const TABS = ['planification', 'overview', 'agents', 'console', 'chat'] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -33,6 +35,7 @@ const TAB_LABELS: Record<Tab, string> = {
   overview: 'Monitor',
   agents: 'Agents',
   console: 'Console',
+  chat: 'Chat',
 };
 
 const HEADER_MARGIN = 6;
@@ -154,6 +157,10 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const [agentSelectMode, setAgentSelectMode] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [taskConsoleExpanded, setTaskConsoleExpanded] = useState(false);
+  // True from the moment run.chat's RPC resolves until the Architect's reply (an agent:message
+  // with no taskId — see the event handler below) actually arrives, since the reply is delivered
+  // asynchronously and isn't the RPC's own return value (same shape as `revising` for /refine).
+  const [chatWaiting, setChatWaiting] = useState(false);
 
   // The live subscription below has no history — a run that's already blocked/done by the time
   // this view mounts (e.g. navigating Home then back) will never emit another event, so `events`
@@ -295,6 +302,13 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
           return next;
         });
       }
+
+      // Only chat's own reply is a taskless architect message (review/consultation messages
+      // always carry the taskId they're about) — this is what clears the "waiting" state,
+      // whether the reply is a genuine answer or the chat path's own failure message.
+      if (event.type === 'agent:message' && event.role === 'architect' && !event.taskId) {
+        setChatWaiting(false);
+      }
     });
   }, [client, run.runId]);
 
@@ -397,7 +411,10 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
         ? 'grilling'
         : pendingConsultation
           ? 'consultation'
-          : null;
+          : tab === 'chat'
+            ? 'chat'
+            : null;
+  const architectId = architectAgentId(run.runId);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: clears the shared draft whenever what it's a draft *for* changes, not on any value read inside
   useEffect(() => {
@@ -405,10 +422,14 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   }, [conversationMode, pendingConsultation?.taskId]);
 
   // The commands each conversation mode actually recognizes (see submitFeedback/
-  // submitGrillingAnswer/submitConsultationReply above) — used only to drive the live
-  // suggestions dropdown, never to decide what a submitted command does.
+  // submitGrillingAnswer/submitConsultationReply/submitChat above) — used only to drive the live
+  // suggestions dropdown, never to decide what a submitted command does. Chat has none of its own.
   const conversationCommands: SlashCommand[] =
-    conversationMode === 'definition' ? DEFINITION_COMMANDS : conversationMode ? SKIP_COMMAND : [];
+    conversationMode === 'definition'
+      ? DEFINITION_COMMANDS
+      : conversationMode === 'grilling' || conversationMode === 'consultation'
+        ? SKIP_COMMAND
+        : [];
   const commandSuggestions = matchCommands(draft, conversationCommands);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
 
@@ -578,6 +599,24 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     }
   };
 
+  const submitChat = async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || busy || chatWaiting) return;
+
+    setBusy(true);
+    try {
+      const updated = await client.chatWithArchitect({ runId: run.runId, message: trimmed });
+      setRun(updated);
+      setDraft('');
+      setChatWaiting(true);
+      setStatus('');
+    } catch (error) {
+      setStatus(`Failed to send: ${(error as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submitConversation = async (rawValue: string) => {
     // Same convention as the home screen's command dropdown: a typed prefix that doesn't exactly
     // match a recognized command, but the suggestions dropdown has candidates for it, resolves to
@@ -597,6 +636,8 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       await submitGrillingAnswer(value);
     } else if (conversationMode === 'consultation' && pendingConsultation) {
       await submitConsultationReply(value, pendingConsultation);
+    } else if (conversationMode === 'chat') {
+      await submitChat(value);
     }
   };
 
@@ -644,7 +685,8 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const shouldFollowScrollTail =
     (liveOpenTask !== null && taskConsoleExpanded) ||
     (liveOpenTask === null && tab === 'console' && consoleDisplayedAgentId !== null) ||
-    (liveOpenTask === null && tab === 'agents');
+    (liveOpenTask === null && tab === 'agents') ||
+    (liveOpenTask === null && tab === 'chat');
 
   const reportScrollMetrics = (metrics: ScrollMetrics) => {
     const normalized = {
@@ -905,7 +947,10 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     width - HEADER_LABEL.length - tabBarWidth - HEADER_MARGIN - MIN_TITLE_GAP,
   );
   const title = truncateTitle(run.title, titleMaxWidth);
-  const { label: statusText, color: statusColor } = statusLabel(busy, waitingForArchitect);
+  const { label: statusText, color: statusColor } = statusLabel(
+    busy,
+    conversationMode === 'chat' ? chatWaiting : waitingForArchitect,
+  );
 
   return (
     <Box flexDirection="column" width={width} marginTop={1}>
@@ -989,11 +1034,21 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
             scrollOffset={scrollOffset}
             onScrollMetrics={reportScrollMetrics}
           />
-        ) : (
+        ) : tab === 'console' ? (
           <ConsolePanel
             events={events}
             eventTimestamps={eventTimestamps}
             selectedAgentId={consoleDisplayedAgentId}
+            width={width}
+            height={bodyHeight}
+            scrollOffset={scrollOffset}
+            onScrollMetrics={reportScrollMetrics}
+          />
+        ) : (
+          <ChatPanel
+            events={events}
+            eventTimestamps={eventTimestamps}
+            architectAgentId={architectId}
             width={width}
             height={bodyHeight}
             scrollOffset={scrollOffset}

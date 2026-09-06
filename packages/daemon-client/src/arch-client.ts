@@ -6,6 +6,7 @@ import type {
   RunAbortRequest,
   RunAnswerGrillingQuestionRequest,
   RunApproveRequest,
+  RunChatRequest,
   RunCreateRequest,
   RunDeleteRequest,
   RunDismissConsultationRequest,
@@ -58,6 +59,10 @@ export class ArchClient {
 
   refineRun(payload: RunRefineRequest): Promise<RunMeta> {
     return this.rpc.request('run.refine', payload);
+  }
+
+  chatWithArchitect(payload: RunChatRequest): Promise<RunMeta> {
+    return this.rpc.request('run.chat', payload);
   }
 
   answerGrillingQuestion(payload: RunAnswerGrillingQuestionRequest): Promise<RunMeta> {

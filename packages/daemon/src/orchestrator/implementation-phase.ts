@@ -54,6 +54,10 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
   // also forwarded to connected clients, so cycle/Architect coordination and
   // UI visibility stay driven by the same single stream.
   const bus = new RunEventBus();
+  // Registered so run.chat can reach this loop's bus while it's alive (see RunManager.getEventBus)
+  // instead of going through the one-shot triggerChatPhase path meant for phases with no live
+  // Architect — cleared in the finally block below alongside architectLoop.stop().
+  runManager.setEventBus(runId, bus);
   const unsubscribeForwarding = bus.subscribe((event) => handle.broadcast(event));
   // Recorded here (rather than read back off the persisted event log) so retryTask can look up
   // the right seq synchronously when a human's reply arrives — see RunManager.pendingConsultations.
@@ -62,7 +66,7 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
       runManager.setPendingConsultation(runId, event.taskId, event.seq);
     }
   });
-  const architectLoop = startArchitectLoop({ run, runDir, config, bus, signal });
+  const architectLoop = startArchitectLoop({ run, runDir, config, bus, signal, runManager });
 
   // Applies a retry queued via RunManager.queueRetry (a task individually stuck while its
   // siblings are still in flight) directly to this loop's own in-memory tasks-index. Mutating a
@@ -198,6 +202,7 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
     throw error;
   } finally {
     await architectLoop.stop();
+    runManager.clearEventBus(runId);
     unsubscribeForwarding();
     unsubscribeConsultations();
   }
