@@ -254,7 +254,12 @@ describe('HomeView', () => {
     await type(stdin, '/runs');
     await press(stdin, '\r');
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    // "First run" alone isn't specific enough — the splash-screen ActiveRunsBar renders it too
+    // while the run is active, so wait for the "Runs" heading to confirm the screen switched.
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
     expect(lastFrame()).toContain('Second run');
 
     await press(stdin, '\x1b[B');
@@ -276,7 +281,10 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
 
     await type(stdin, 'sec');
     await vi.waitFor(() => expect(lastFrame()).not.toContain('First run'));
@@ -300,10 +308,16 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    // Both the runs screen and the splash-screen ActiveRunsBar can render "First run" (its phase
+    // is active), so wait for the "Runs" heading too — otherwise this can resolve while still on
+    // the splash screen, before the ctrl+d below has a runs list to act on.
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
 
     await press(stdin, '\x04');
-    expect(lastFrame()).toContain('Delete "First run"?');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Delete "First run"?'));
 
     await press(stdin, 'y');
     await vi.waitFor(() => expect(client.deleteRun).toHaveBeenCalledWith({ runId: 'run-1' }));
@@ -321,10 +335,13 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
 
     await press(stdin, '\x04');
-    expect(lastFrame()).toContain('Delete "First run"?');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Delete "First run"?'));
 
     await press(stdin, 'n');
     expect(lastFrame()).not.toContain('Delete "First run"?');
@@ -345,7 +362,10 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
 
     await press(stdin, '\x04');
     await press(stdin, 'y');

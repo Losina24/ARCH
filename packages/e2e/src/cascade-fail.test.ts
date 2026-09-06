@@ -69,8 +69,17 @@ describe('cascade fail', () => {
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
       15000,
     );
+    // TASK-C is unrelated to the A→B dependency chain, so it keeps running on its own schedule —
+    // it isn't guaranteed to have finished by the time the run itself flips to 'blocked'.
+    const taskCDone = waitForEvent(
+      daemon.client,
+      (event) =>
+        event.type === 'task:status-changed' && event.taskId === 'TASK-C' && event.status === 'done',
+      15000,
+    );
     await daemon.client.approveRun({ runId: run.runId });
     await runBlocked;
+    await taskCDone;
 
     const finalRun = await daemon.client.getRun({ runId: run.runId });
     expect(finalRun.phase).toBe('blocked');
