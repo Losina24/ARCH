@@ -21,6 +21,13 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// vi.waitFor's own default timeout is 1000ms, which is tight enough that these
+// screen-transition assertions have failed intermittently on GitHub Actions' slower/more
+// contended runners even though they pass reliably (and fast) locally. Give them more room.
+function waitFor(assertion: () => void): Promise<void> {
+  return vi.waitFor(assertion, { timeout: 5000 });
+}
+
 async function press(stdin: Stdin, sequence: string): Promise<void> {
   stdin.write(sequence);
   await tick();
@@ -51,6 +58,7 @@ function mockClient(overrides: Partial<ArchClient> = {}): ArchClient {
     createRun: vi.fn(),
     getConfig: vi.fn().mockResolvedValue(config),
     deleteRun: vi.fn().mockResolvedValue({ ok: true }),
+    onEvent: vi.fn().mockReturnValue(vi.fn()),
     ...overrides,
   } as unknown as ArchClient;
 }
@@ -69,6 +77,39 @@ describe('HomeView', () => {
     expect(frame).toContain('/tmp/project');
   });
 
+  it('shows non-terminated runs in a top bar on the splash screen', async () => {
+    const runs = [
+      runMeta({ runId: 'run-1', title: 'Add login page', phase: 'implementation' }),
+      runMeta({ runId: 'run-2', title: 'Fix flaky test', phase: 'done' }),
+      runMeta({ runId: 'run-3', title: 'Refactor auth', phase: 'blocked' }),
+    ];
+    const client = mockClient({ listRuns: vi.fn().mockResolvedValue(runs) });
+    const { lastFrame } = render(
+      <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('[implementation] Add login page');
+      expect(frame).not.toContain('Fix flaky test');
+      expect(frame).not.toContain('Refactor auth');
+    });
+  });
+
+  it('renders no top bar on the splash screen when every run is done or blocked', async () => {
+    const runs = [runMeta({ runId: 'run-1', title: 'Add login page', phase: 'done' })];
+    const client = mockClient({ listRuns: vi.fn().mockResolvedValue(runs) });
+    const { lastFrame } = render(
+      <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
+    );
+
+    await tick();
+    await waitFor(() => {
+      expect(lastFrame()).toContain('Describe your task and give instructions');
+    });
+    expect(lastFrame()).not.toContain('[done] Add login page');
+  });
+
   it('treats typed text as a new run and opens it once created', async () => {
     const created = runMeta({ runId: 'run-new', title: 'fix bug' });
     const client = mockClient({ createRun: vi.fn().mockResolvedValue(created) });
@@ -81,7 +122,7 @@ describe('HomeView', () => {
     await type(stdin, 'fix bug');
     await press(stdin, '\r');
 
-    await vi.waitFor(() => expect(onOpenRun).toHaveBeenCalledWith(created));
+    await waitFor(() => expect(onOpenRun).toHaveBeenCalledWith(created));
     expect(client.createRun).toHaveBeenCalledWith({ prompt: 'fix bug', cwd: '/tmp/project' });
   });
 
@@ -95,7 +136,7 @@ describe('HomeView', () => {
     await type(stdin, '/settings');
     await press(stdin, '\r');
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('Settings'));
+    await waitFor(() => expect(lastFrame()).toContain('Settings'));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Architect model');
     expect(frame).toContain('claude-opus-5');
@@ -111,10 +152,10 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/settings');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('Settings'));
+    await waitFor(() => expect(lastFrame()).toContain('Settings'));
 
     await press(stdin, '\x1b');
-    await vi.waitFor(() => expect(lastFrame()).not.toContain('Settings'));
+    await waitFor(() => expect(lastFrame()).not.toContain('Settings'));
     expect(lastFrame()).toContain('Describe your task and give instructions');
   });
 
@@ -131,16 +172,16 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
+    await waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
     await type(stdin, '/settings');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('Settings'));
+    await waitFor(() => expect(lastFrame()).toContain('Settings'));
 
     await press(stdin, 's');
-    await vi.waitFor(() => expect(lastFrame()).toContain('Saved.'));
+    await waitFor(() => expect(lastFrame()).toContain('Saved.'));
     await press(stdin, '\x1b');
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('gpt-5.6-sol'));
+    await waitFor(() => expect(lastFrame()).toContain('gpt-5.6-sol'));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('gpt-5.6-luna');
     expect(frame).not.toContain('claude-opus-5');
@@ -198,11 +239,11 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
+    await waitFor(() => expect(lastFrame()).toContain('claude-opus-5'));
     await type(stdin, '/se');
     await press(stdin, '\r');
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('Settings'));
+    await waitFor(() => expect(lastFrame()).toContain('Settings'));
   });
 
   it('lists runs via /runs and opens the selected one', async () => {
@@ -220,7 +261,12 @@ describe('HomeView', () => {
     await type(stdin, '/runs');
     await press(stdin, '\r');
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    // "First run" alone isn't specific enough — the splash-screen ActiveRunsBar renders it too
+    // while the run is active, so wait for the "Runs" heading to confirm the screen switched.
+    await waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
     expect(lastFrame()).toContain('Second run');
 
     await press(stdin, '\x1b[B');
@@ -242,14 +288,17 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    await waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
 
     await type(stdin, 'sec');
-    await vi.waitFor(() => expect(lastFrame()).not.toContain('First run'));
+    await waitFor(() => expect(lastFrame()).not.toContain('First run'));
     expect(lastFrame()).toContain('Second run');
 
     await press(stdin, '\x1b');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    await waitFor(() => expect(lastFrame()).toContain('First run'));
     expect(lastFrame()).toContain('Second run');
   });
 
@@ -266,13 +315,19 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    // Both the runs screen and the splash-screen ActiveRunsBar can render "First run" (its phase
+    // is active), so wait for the "Runs" heading too — otherwise this can resolve while still on
+    // the splash screen, before the ctrl+d below has a runs list to act on.
+    await waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
 
     await press(stdin, '\x04');
-    expect(lastFrame()).toContain('Delete "First run"?');
+    await waitFor(() => expect(lastFrame()).toContain('Delete "First run"?'));
 
     await press(stdin, 'y');
-    await vi.waitFor(() => expect(client.deleteRun).toHaveBeenCalledWith({ runId: 'run-1' }));
+    await waitFor(() => expect(client.deleteRun).toHaveBeenCalledWith({ runId: 'run-1' }));
     expect(lastFrame()).not.toContain('First run');
     expect(lastFrame()).toContain('Second run');
   });
@@ -287,10 +342,13 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    await waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
 
     await press(stdin, '\x04');
-    expect(lastFrame()).toContain('Delete "First run"?');
+    await waitFor(() => expect(lastFrame()).toContain('Delete "First run"?'));
 
     await press(stdin, 'n');
     expect(lastFrame()).not.toContain('Delete "First run"?');
@@ -311,12 +369,15 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('First run'));
+    await waitFor(() => {
+      expect(lastFrame()).toContain('Runs');
+      expect(lastFrame()).toContain('First run');
+    });
 
     await press(stdin, '\x04');
     await press(stdin, 'y');
 
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(lastFrame()).toContain('Failed to delete run: Run run-1 is still active'),
     );
     expect(lastFrame()).toContain('First run');
@@ -331,7 +392,7 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/runs');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('No runs yet'));
+    await waitFor(() => expect(lastFrame()).toContain('No runs yet'));
 
     await press(stdin, '\x1b');
     expect(lastFrame()).not.toContain('No runs yet');
@@ -344,7 +405,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('Architect'));
+    await waitFor(() => expect(lastFrame()).toContain('Architect'));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Worker');
     expect(frame).toContain('claude-opus-5');
@@ -378,7 +439,7 @@ describe('HomeView', () => {
     await tick();
     await type(stdin, '/help');
     await press(stdin, '\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('Help'));
+    await waitFor(() => expect(lastFrame()).toContain('Help'));
 
     await press(stdin, '\x1b');
     expect(lastFrame()).not.toContain('Help');

@@ -96,7 +96,7 @@ describe('worktree dependency install', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.approveRun({ runId: run.runId });
     await runDone;

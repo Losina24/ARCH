@@ -4,6 +4,7 @@ import {
   ClaudeApiRejectionError,
   ClaudeCliExecutionError,
   ClaudeStreamAbortedError,
+  ClaudeTimeoutError,
   runClaudeHeadless,
 } from './run-headless.js';
 
@@ -319,6 +320,37 @@ describe('runClaudeHeadless', () => {
       expect(error.message.split('\n').length).toBeLessThanOrEqual(2);
       expect(error.message).not.toContain('claude -p');
     });
+  });
+
+  it('throws a short ClaudeTimeoutError when the hard subprocess timeout fires', async () => {
+    const secretPrompt = 'do not expose this prompt';
+    const execaError = Object.assign(new Error(`Command timed out: claude -p ${secretPrompt}`), {
+      stdout: '',
+      timedOut: true,
+      signal: 'SIGTERM',
+    });
+    mockedExeca.mockRejectedValue(execaError);
+
+    const promise = runClaudeHeadless({
+      prompt: secretPrompt,
+      model: 'sonnet',
+      cwd: '/tmp',
+      timeoutMs: 30 * 60 * 1000,
+    });
+    await expect(promise).rejects.toBeInstanceOf(ClaudeTimeoutError);
+    await promise.catch((error: Error) => {
+      expect(error.message).toBe('Claude CLI timed out after 30 minutes.');
+      expect(error.message).not.toContain(secretPrompt);
+    });
+    const [, , options] = mockedExeca.mock.calls[0] ?? [];
+    expect(options).toMatchObject({ timeout: 30 * 60 * 1000 });
+  });
+
+  it('omits the timeout option when timeoutMs is not provided', async () => {
+    mockStdout({ type: 'result', session_id: 'session-1', result: 'done' });
+    await runClaudeHeadless({ prompt: 'p', model: 'sonnet', cwd: '/tmp' });
+    const [, , options] = mockedExeca.mock.calls[0] ?? [];
+    expect(options).not.toHaveProperty('timeout');
   });
 
   it('wraps a failure with an unrelated terminal_reason in ClaudeCliExecutionError', async () => {

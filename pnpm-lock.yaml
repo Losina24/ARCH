@@ -174,13 +174,13 @@ importers:
       '@losina/schemas':
         specifier: workspace:*
         version: link:../schemas
-      '@losina/tl':
-        specifier: workspace:*
-        version: link:../tl
       '@losina/validator':
         specifier: workspace:*
         version: link:../validator
     devDependencies:
+      execa:
+        specifier: ^9.5.1
+        version: 9.6.1
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -282,31 +282,6 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.20.1)
-
-  packages/tl:
-    dependencies:
-      '@losina/agent-runtime':
-        specifier: workspace:*
-        version: link:../agent-runtime
-      '@losina/core':
-        specifier: workspace:*
-        version: link:../core
-      '@losina/schemas':
-        specifier: workspace:*
-        version: link:../schemas
-      '@losina/validator':
-        specifier: workspace:*
-        version: link:../validator
-    devDependencies:
-      execa:
-        specifier: ^9.5.1
-        version: 9.6.1
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

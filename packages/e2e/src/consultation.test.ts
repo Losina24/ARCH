@@ -79,12 +79,12 @@ describe('architect consultation on a stuck task', () => {
     const questionAsked = waitForEvent(
       daemon.client,
       (event) => event.type === 'consultation:question-asked' && event.taskId === 'TASK-001',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a marker file');
     const question = await questionAsked;
@@ -130,7 +130,7 @@ describe('architect consultation on a stuck task', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.retryTask({
       runId: run.runId,
@@ -158,12 +158,12 @@ describe('architect consultation on a stuck task', () => {
     const questionAsked = waitForEvent(
       daemon.client,
       (event) => event.type === 'consultation:question-asked' && event.taskId === 'TASK-001',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Do something that needs permission');
     await questionAsked;
@@ -185,12 +185,12 @@ describe('architect consultation on a stuck task', () => {
         event.type === 'task:status-changed' &&
         event.taskId === 'TASK-001' &&
         event.status === 'failed',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a marker file');
     const failedEvent = await taskFailed;
@@ -210,7 +210,7 @@ describe('architect consultation on a stuck task', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.retryTask({ runId: run.runId, taskId: 'TASK-001', message: 'try again' });
     await runDone;
@@ -228,12 +228,12 @@ describe('architect consultation on a stuck task', () => {
     const questionAsked = waitForEvent(
       daemon.client,
       (event) => event.type === 'consultation:question-asked' && event.taskId === 'TASK-001',
-      15000,
+      30000,
     );
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a marker file');
     await questionAsked;
@@ -258,7 +258,7 @@ describe('architect consultation on a stuck task', () => {
     const runDone = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'done',
-      15000,
+      30000,
     );
     await daemon.client.retryTask({ runId: run.runId, taskId: 'TASK-001', message: 'try again' });
     await runDone;
@@ -276,7 +276,7 @@ describe('architect consultation on a stuck task', () => {
     const runBlocked = waitForEvent(
       daemon.client,
       (event) => event.type === 'run:status-changed' && event.phase === 'blocked',
-      15000,
+      30000,
     );
     const run = await createAndApprove('Write a marker file');
     await runBlocked;

@@ -30,10 +30,10 @@
     "@losina/core": "workspace:*",
     "@losina/ipc": "workspace:*",
     "@losina/schemas": "workspace:*",
-    "@losina/tl": "workspace:*",
     "@losina/validator": "workspace:*"
   },
   "devDependencies": {
+    "execa": "^9.5.1",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }
