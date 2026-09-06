@@ -3,32 +3,37 @@ import type { ArchClient } from '@losina/daemon-client';
 import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@losina/schemas';
 import { Box, type DOMElement, Text, measureElement, useInput } from 'ink';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { deriveAgentStatuses } from '../agent-status.js';
-import { isCommand } from '../commands.js';
+import { type SlashCommand, isCommand, matchCommands } from '../commands.js';
 import { type CommandHint, CommandHints } from '../components/command-hints.js';
+import { CommandSuggestions } from '../components/command-suggestions.js';
 import { GradientText } from '../components/gradient-text.js';
 import { ScrollBox, type ScrollMetrics } from '../components/scroll-box.js';
 import { StatusBar } from '../components/status-bar.js';
 import { useTerminalColumns } from '../hooks/use-terminal-columns.js';
 import { useTerminalRows } from '../hooks/use-terminal-rows.js';
-import { AgentPromptInput } from '../panels/agent-prompt-input.js';
+import { AgentsPanel } from '../panels/agents-panel.js';
+import {
+  ArchitectConversationInput,
+  type ConversationMode,
+} from '../panels/architect-conversation-input.js';
 import { ChatPanel } from '../panels/chat-panel.js';
 import { ConsolePanel } from '../panels/console-panel.js';
+import { ConsultationPanel } from '../panels/consultation-panel.js';
 import { ExecutionPanel } from '../panels/execution-panel.js';
-import { FeedbackInput } from '../panels/feedback-input.js';
-import { GrillingAnswerInput } from '../panels/grilling-answer-input.js';
 import { GrillingPanel } from '../panels/grilling-panel.js';
 import { PlanificationPanel } from '../panels/planification-panel.js';
 import { TaskDetailPanel } from '../panels/task-detail-panel.js';
 import { ERROR, INACTIVE, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
 
-const TABS = ['planification', 'overview', 'console', 'chat'] as const;
+const TABS = ['planification', 'overview', 'agents', 'console', 'chat'] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   planification: 'Overview',
   overview: 'Monitor',
+  agents: 'Agents',
   console: 'Console',
   chat: 'Chat',
 };
@@ -38,22 +43,40 @@ const HEADER_LABEL = 'ARCH Terminal';
 const MIN_TITLE_GAP = 14;
 const SCROLL_STEP = 3;
 
+// The commands the Architect conversation box recognizes, for the live suggestions dropdown —
+// see submitFeedback/submitGrillingAnswer/submitConsultationReply below for what they actually do.
+const DEFINITION_COMMANDS: SlashCommand[] = [
+  { name: 'approve', description: 'Approve the plan and start the run' },
+  { name: 'abort', description: 'Abort the run' },
+];
+const SKIP_COMMAND: SlashCommand[] = [
+  { name: 'skip', description: 'Skip this question and move on' },
+];
+
 // Row budget so the whole view never exceeds the terminal height — header and
 // footer stay pinned, and only the body scrolls internally. The header is a
 // fixed height (its title is truncated to fit, never wraps), but the footer's
 // height is measured for real: command hints, the status message, and the
-// feedback/grilling/agent-prompt inputs (which grow up to 3 lines of typed or
-// pasted text, see MultilineTextInput's MAX_VISIBLE_ROWS) can each render
-// taller than a single line depending on their content and the terminal's
-// width, so a fixed row count for them would eventually under-reserve space,
-// push the total output height to (or past) the terminal's row count, and
-// trip Ink 5's full-screen clear-and-redraw path below — visible as flicker
-// concentrated at the bottom of the screen.
+// Architect conversation input (which grows up to 3 lines of typed or pasted
+// text, see MultilineTextInput's MAX_VISIBLE_ROWS) can each render taller
+// than a single line depending on their content and the terminal's width, so
+// a fixed row count for them would eventually under-reserve space, push the
+// total output height to (or past) the terminal's row count, and trip Ink 5's
+// full-screen clear-and-redraw path below — visible as flicker concentrated
+// at the bottom of the screen.
 const HEADER_ROWS = 5; // top margin + title/tab-bar line + margin + divider line + margin
 const MIN_BODY_ROWS = 3;
 // Ink 5 clears the entire terminal whenever rendered output is as tall as the TTY. Keeping one
 // row unused makes animated frames use its normal cursor-based redraw path instead.
 const RENDER_HEADROOM_ROWS = 1;
+
+interface ConsultationState {
+  taskId: string;
+  seq: number;
+  question: string;
+  recommendation: string;
+  failureReason: string;
+}
 
 function tabText(candidate: Tab, active: Tab): string {
   return candidate === active ? `› ${TAB_LABELS[candidate]} ‹` : `  ${TAB_LABELS[candidate]}  `;
@@ -110,13 +133,13 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const [planError, setPlanError] = useState<string | null>(null);
   const [config, setConfig] = useState<AgentMeshConfig | null>(null);
   const [revising, setRevising] = useState(false);
-  const [feedback, setFeedback] = useState('');
   const [grillingQuestion, setGrillingQuestion] = useState<{
     seq: number;
     question: string;
     recommendation: string;
   } | null>(null);
-  const [grillingAnswer, setGrillingAnswer] = useState('');
+  const [consultations, setConsultations] = useState<Map<string, ConsultationState>>(new Map());
+  const [draft, setDraft] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -133,10 +156,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const [selectedAgentIndex, setSelectedAgentIndex] = useState(0);
   const [agentSelectMode, setAgentSelectMode] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [agentPrompt, setAgentPrompt] = useState('');
   const [taskConsoleExpanded, setTaskConsoleExpanded] = useState(false);
-  const [taskConsolePrompt, setTaskConsolePrompt] = useState('');
-  const [chatMessage, setChatMessage] = useState('');
   // True from the moment run.chat's RPC resolves until the Architect's reply (an agent:message
   // with no taskId — see the event handler below) actually arrives, since the reply is delivered
   // asynchronously and isn't the RPC's own return value (same shape as `revising` for /refine).
@@ -150,6 +170,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const hydratedRef = useRef(false);
   const pendingLiveEventsRef = useRef<{ event: ArchMeshEvent; timestamp: number }[]>([]);
   const followScrollTailRef = useRef(false);
+  const lastSurfacedConsultationRef = useRef<string | null>(null);
 
   const tasks = plan?.tasksIndex.tasks ?? [];
   const selectedTask = tasks[selectedTaskIndex] ?? null;
@@ -176,7 +197,6 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   // biome-ignore lint/correctness/useExhaustiveDependencies: resets task-console UI state whenever a different task is opened, not on any other value read inside
   useEffect(() => {
     setTaskConsoleExpanded(false);
-    setTaskConsolePrompt('');
   }, [openTask?.id]);
 
   useEffect(() => {
@@ -219,6 +239,17 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
           );
           return { ...previous, tasksIndex: { ...previous.tasksIndex, tasks } };
         });
+        // A task leaving failed/awaiting_human (retried, or resolved some other way) clears any
+        // consultation shown for it — robust to a daemon restart, where the in-memory
+        // consultation:answered event this normally rides on would never arrive.
+        if (event.status !== 'failed' && event.status !== 'awaiting_human') {
+          setConsultations((previous) => {
+            if (!previous.has(event.taskId)) return previous;
+            const next = new Map(previous);
+            next.delete(event.taskId);
+            return next;
+          });
+        }
       }
 
       if (event.type === 'agent:activity' && event.role === 'architect') {
@@ -247,6 +278,29 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
 
       if (event.type === 'grilling:answered') {
         setGrillingQuestion(null);
+      }
+
+      if (event.type === 'consultation:question-asked') {
+        setConsultations((previous) => {
+          const next = new Map(previous);
+          next.set(event.taskId, {
+            taskId: event.taskId,
+            seq: event.seq,
+            question: event.question,
+            recommendation: event.recommendation,
+            failureReason: event.failureReason,
+          });
+          return next;
+        });
+      }
+
+      if (event.type === 'consultation:answered') {
+        setConsultations((previous) => {
+          if (!previous.has(event.taskId)) return previous;
+          const next = new Map(previous);
+          next.delete(event.taskId);
+          return next;
+        });
       }
 
       // Only chat's own reply is a taskless architect message (review/consultation messages
@@ -288,6 +342,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
         ]);
 
         let lastQuestion: { seq: number; question: string; recommendation: string } | null = null;
+        const hydratedConsultations = new Map<string, ConsultationState>();
         for (const event of allEvents) {
           if (event.type === 'grilling:question-asked') {
             lastQuestion = {
@@ -297,9 +352,26 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
             };
           } else if (event.type === 'grilling:answered') {
             lastQuestion = null;
+          } else if (event.type === 'consultation:question-asked') {
+            hydratedConsultations.set(event.taskId, {
+              taskId: event.taskId,
+              seq: event.seq,
+              question: event.question,
+              recommendation: event.recommendation,
+              failureReason: event.failureReason,
+            });
+          } else if (event.type === 'consultation:answered') {
+            hydratedConsultations.delete(event.taskId);
+          } else if (
+            event.type === 'task:status-changed' &&
+            event.status !== 'failed' &&
+            event.status !== 'awaiting_human'
+          ) {
+            hydratedConsultations.delete(event.taskId);
           }
         }
         setGrillingQuestion(lastQuestion);
+        setConsultations(hydratedConsultations);
       })
       .catch(() => {
         const buffered = drainBuffered();
@@ -311,28 +383,78 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       });
   }, [client, run.runId]);
 
-  const architectEvents = events.filter(
-    (event): event is AgentActivityEvent =>
-      event.type === 'agent:activity' && event.role === 'architect',
-  );
-  const latestArchitectEvent = architectEvents[architectEvents.length - 1];
+  // Both are full passes over the run's whole event history — memoized so a re-render that has
+  // nothing to do with new events (typing in the chat box being the notable case: every keystroke
+  // re-renders this view) doesn't redo them from scratch.
+  const latestArchitectEvent = useMemo(() => {
+    const architectEvents = events.filter(
+      (event): event is AgentActivityEvent =>
+        event.type === 'agent:activity' && event.role === 'architect',
+    );
+    return architectEvents[architectEvents.length - 1];
+  }, [events]);
   const architectFailed = latestArchitectEvent?.state === 'failed';
   const waitingForArchitect = run.phase === 'definition' && !architectFailed && (!plan || revising);
 
-  const activityEvents = events.filter(
-    (event): event is AgentActivityEvent => event.type === 'agent:activity',
-  );
-  const agents = deriveAgentStatuses(events);
-  const selectedAgentTaskId = selectedAgentId
-    ? [...activityEvents].reverse().find((event) => event.agentId === selectedAgentId)?.taskId
-    : undefined;
-  const selectedAgentTask = selectedAgentTaskId
-    ? tasks.find((task) => task.id === selectedAgentTaskId)
-    : undefined;
+  const agents = useMemo(() => deriveAgentStatuses(events), [events]);
 
   useEffect(() => {
     setSelectedAgentIndex((index) => Math.min(index, Math.max(0, agents.length - 1)));
   }, [agents.length]);
+
+  // Oldest-pending-first: Map iteration order is insertion order, and an update (re-asking for
+  // the same task) uses the same key, so a task's position never moves just because its question
+  // changed — only actually resolving it (delete) and later triggering a new one moves it to the
+  // back of the queue.
+  const pendingConsultation = consultations.size > 0 ? [...consultations.values()][0] : null;
+
+  const conversationMode: ConversationMode | null = openTask
+    ? null
+    : run.phase === 'definition'
+      ? 'definition'
+      : run.phase === 'grilling' && grillingQuestion
+        ? 'grilling'
+        : pendingConsultation
+          ? 'consultation'
+          : tab === 'chat'
+            ? 'chat'
+            : null;
+  const architectId = architectAgentId(run.runId);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clears the shared draft whenever what it's a draft *for* changes, not on any value read inside
+  useEffect(() => {
+    setDraft('');
+  }, [conversationMode, pendingConsultation?.taskId]);
+
+  // The commands each conversation mode actually recognizes (see submitFeedback/
+  // submitGrillingAnswer/submitConsultationReply/submitChat above) — used only to drive the live
+  // suggestions dropdown, never to decide what a submitted command does. Chat has none of its own.
+  const conversationCommands: SlashCommand[] =
+    conversationMode === 'definition'
+      ? DEFINITION_COMMANDS
+      : conversationMode === 'grilling' || conversationMode === 'consultation'
+        ? SKIP_COMMAND
+        : [];
+  const commandSuggestions = matchCommands(draft, conversationCommands);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resets the command-menu highlight whenever the typed text changes, not on any value read inside
+  useEffect(() => {
+    setSuggestionIndex(0);
+  }, [draft]);
+
+  // Auto-switches to the Overview tab the first time a given consultation surfaces, so it's
+  // visible without the human having to notice it and navigate manually — but only once per
+  // question, and never while a task detail page is open (openTask hides the conversation
+  // entirely, see conversationMode above). If a question arrives while one is open, the switch
+  // still happens once it's closed, since the ref is only marked once the switch actually runs.
+  useEffect(() => {
+    if (!pendingConsultation || openTask) return;
+    const key = `${pendingConsultation.taskId}:${pendingConsultation.seq}`;
+    if (lastSurfacedConsultationRef.current === key) return;
+    lastSurfacedConsultationRef.current = key;
+    setTab('planification');
+  }, [pendingConsultation, openTask]);
 
   const approve = async () => {
     setBusy(true);
@@ -368,12 +490,12 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     if (!trimmed || busy) return;
 
     if (isCommand(trimmed, 'approve')) {
-      setFeedback('');
+      setDraft('');
       await approve();
       return;
     }
     if (isCommand(trimmed, 'abort')) {
-      setFeedback('');
+      setDraft('');
       await abort();
       return;
     }
@@ -388,7 +510,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     try {
       const updated = await client.refineRun({ runId: run.runId, feedback: trimmed });
       setRun(updated);
-      setFeedback('');
+      setDraft('');
       setRevising(true);
       setStatus('Feedback sent — revising the plan.');
     } catch (error) {
@@ -408,7 +530,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       try {
         const updated = await client.answerGrillingQuestion({ runId: run.runId, skip: true });
         setRun(updated);
-        setGrillingAnswer('');
+        setDraft('');
         setStatus('');
       } catch (error) {
         setStatus(`Failed to skip: ${(error as Error).message}`);
@@ -426,7 +548,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     try {
       const updated = await client.answerGrillingQuestion({ runId: run.runId, answer });
       setRun(updated);
-      setGrillingAnswer('');
+      setDraft('');
       setStatus('');
     } catch (error) {
       setStatus(`Failed to send the answer: ${(error as Error).message}`);
@@ -435,49 +557,51 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     }
   };
 
-  const sendHumanPromptToTask = async (
-    targetTask: Task,
-    message: string,
-    clearInput: () => void,
-  ) => {
-    setBusy(true);
-    setStatus('Sending message to the agent…');
-    try {
-      const updated = await client.retryTask({
-        runId: run.runId,
-        taskId: targetTask.id,
-        message,
-      });
-      setRun(updated);
-      clearInput();
-      setStatus('Message sent — resuming the agent.');
-    } catch (error) {
-      setStatus(`Failed to resume the agent: ${(error as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submitAgentPrompt = async (value: string) => {
+  const submitConsultationReply = async (value: string, consultation: ConsultationState) => {
+    if (busy) return;
     const trimmed = value.trim();
-    if (!trimmed || busy || !selectedAgentId) return;
 
-    if (
-      !selectedAgentTask ||
-      (selectedAgentTask.status !== 'failed' && selectedAgentTask.status !== 'awaiting_human')
-    ) {
-      setStatus('Only a failed or awaiting-help worker agent can be resumed with a message.');
+    if (isCommand(trimmed, 'skip')) {
+      setBusy(true);
+      setStatus("Dismissing the Architect's question…");
+      try {
+        const updated = await client.dismissConsultation({
+          runId: run.runId,
+          taskId: consultation.taskId,
+        });
+        setRun(updated);
+        setDraft('');
+        setStatus('');
+      } catch (error) {
+        setStatus(`Failed to dismiss: ${(error as Error).message}`);
+      } finally {
+        setBusy(false);
+      }
       return;
     }
 
-    await sendHumanPromptToTask(selectedAgentTask, trimmed, () => setAgentPrompt(''));
-  };
+    // Enter on an empty reply accepts the Architect's own recommendation, same convention as
+    // grilling. Whatever the reply ends up being, it goes straight to retryTask verbatim — no
+    // second Architect call translates it first, see escalateToHuman in tl-loop.ts.
+    const reply = trimmed || consultation.recommendation;
+    if (!reply) return;
 
-  const submitTaskConsolePrompt = async (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed || busy || !liveOpenTask || !showTaskConsoleInput) return;
-
-    await sendHumanPromptToTask(liveOpenTask, trimmed, () => setTaskConsolePrompt(''));
+    setBusy(true);
+    setStatus('Sending your reply to the agent…');
+    try {
+      const updated = await client.retryTask({
+        runId: run.runId,
+        taskId: consultation.taskId,
+        message: reply,
+      });
+      setRun(updated);
+      setDraft('');
+      setStatus('Reply sent — resuming the agent.');
+    } catch (error) {
+      setStatus(`Failed to send the reply: ${(error as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submitChat = async (value: string) => {
@@ -488,7 +612,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     try {
       const updated = await client.chatWithArchitect({ runId: run.runId, message: trimmed });
       setRun(updated);
-      setChatMessage('');
+      setDraft('');
       setChatWaiting(true);
       setStatus('');
     } catch (error) {
@@ -498,15 +622,30 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     }
   };
 
-  const showFeedbackInput = tab === 'planification' && run.phase === 'definition';
-  const showGrillingInput =
-    tab === 'planification' && run.phase === 'grilling' && grillingQuestion !== null;
-  const showAgentPromptInput = tab === 'console' && selectedAgentId !== null;
-  const showChatInput = tab === 'chat';
-  const architectId = architectAgentId(run.runId);
-  const showTaskConsoleInput =
-    liveOpenTask !== null &&
-    (liveOpenTask.status === 'failed' || liveOpenTask.status === 'awaiting_human');
+  const submitConversation = async (rawValue: string) => {
+    // Same convention as the home screen's command dropdown: a typed prefix that doesn't exactly
+    // match a recognized command, but the suggestions dropdown has candidates for it, resolves to
+    // whichever one is arrow-key-highlighted — so "/app" + Enter runs /approve instead of being
+    // sent to the Architect as literal feedback.
+    const isExactCommand = conversationCommands.some((command) =>
+      isCommand(rawValue, command.name),
+    );
+    const value =
+      !isExactCommand && commandSuggestions.length > 0
+        ? `/${commandSuggestions[Math.min(suggestionIndex, commandSuggestions.length - 1)]?.name ?? ''}`
+        : rawValue;
+
+    if (conversationMode === 'definition') {
+      await submitFeedback(value);
+    } else if (conversationMode === 'grilling') {
+      await submitGrillingAnswer(value);
+    } else if (conversationMode === 'consultation' && pendingConsultation) {
+      await submitConsultationReply(value, pendingConsultation);
+    } else if (conversationMode === 'chat') {
+      await submitChat(value);
+    }
+  };
+
   const consoleDisplayedAgentId = agentSelectMode
     ? (agents[selectedAgentIndex]?.agentId ?? null)
     : selectedAgentId;
@@ -551,9 +690,14 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const shouldFollowScrollTail =
     (liveOpenTask !== null && taskConsoleExpanded) ||
     (liveOpenTask === null && tab === 'console' && consoleDisplayedAgentId !== null) ||
+    (liveOpenTask === null && tab === 'agents') ||
     (liveOpenTask === null && tab === 'chat');
 
-  const reportScrollMetrics = (metrics: ScrollMetrics) => {
+  // Stable on purpose (only reads/writes state setters and a ref, none of which ever change) —
+  // passed as `onScrollMetrics` to every tab panel below, and ChatPanel is memoized specifically
+  // so it can skip re-rendering while typing; a fresh function reference here every render would
+  // silently defeat that.
+  const reportScrollMetrics = useCallback((metrics: ScrollMetrics) => {
     const normalized = {
       contentHeight: Math.max(0, metrics.contentHeight),
       viewportHeight: Math.max(1, metrics.viewportHeight),
@@ -568,7 +712,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     setScrollOffset((offset) =>
       followScrollTailRef.current ? nextMaxOffset : Math.min(offset, nextMaxOffset),
     );
-  };
+  }, []);
 
   useEffect(() => {
     setScrollOffset((offset) => Math.min(offset, maxScrollOffset));
@@ -620,14 +764,6 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
         return;
       }
 
-      if (showTaskConsoleInput) {
-        if (key.escape) {
-          if (taskConsolePrompt) setTaskConsolePrompt('');
-          else setOpenTask(null);
-        }
-        return;
-      }
-
       if (key.escape) {
         setOpenTask(null);
         return;
@@ -639,6 +775,27 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       return;
     }
 
+    // Command-suggestions navigation takes priority over tab-switching/scrolling — it only ever
+    // activates while the conversation box is open AND the draft is a recognized-mode command
+    // prefix (matchCommands returns [] otherwise), so it can't shadow Tab/arrows the rest of the
+    // time. Enter is handled by ArchitectConversationInput's own onSubmit, same as the home
+    // screen's pattern, not here.
+    if (commandSuggestions.length > 0) {
+      if (key.upArrow) {
+        setSuggestionIndex((index) => Math.max(0, index - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSuggestionIndex((index) => Math.min(commandSuggestions.length - 1, index + 1));
+        return;
+      }
+      if (key.tab) {
+        const clampedIndex = Math.min(suggestionIndex, commandSuggestions.length - 1);
+        setDraft(`/${commandSuggestions[clampedIndex]?.name ?? ''} `);
+        return;
+      }
+    }
+
     if (key.tab) {
       const currentIndex = TABS.indexOf(tab);
       const nextIndex = key.shift
@@ -648,12 +805,12 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       return;
     }
 
-    if (tab === 'overview' && tasks.length > 0 && input === 's') {
+    if (!conversationMode && tab === 'overview' && tasks.length > 0 && input === 's') {
       setTaskSelectMode((mode) => !mode);
       return;
     }
 
-    if (tab === 'overview' && taskSelectMode && tasks.length > 0) {
+    if (!conversationMode && tab === 'overview' && taskSelectMode && tasks.length > 0) {
       if (key.upArrow) {
         setSelectedTaskIndex((index) => Math.max(0, index - 1));
         return;
@@ -668,12 +825,12 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       }
     }
 
-    if (tab === 'console' && !showAgentPromptInput && agents.length > 0 && input === 's') {
+    if (!conversationMode && tab === 'console' && agents.length > 0 && input === 's') {
       setAgentSelectMode((mode) => !mode);
       return;
     }
 
-    if (tab === 'console' && !showAgentPromptInput && agentSelectMode && agents.length > 0) {
+    if (!conversationMode && tab === 'console' && agentSelectMode && agents.length > 0) {
       if (key.upArrow) {
         setSelectedAgentIndex((index) => Math.max(0, index - 1));
         return;
@@ -706,73 +863,49 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       return;
     }
 
-    if (showFeedbackInput) {
+    if (conversationMode) {
       if (key.escape) {
-        if (feedback) setFeedback('');
-        else onBack();
-      }
-      return;
-    }
-
-    if (showGrillingInput) {
-      if (key.escape) {
-        if (grillingAnswer) setGrillingAnswer('');
-        else onBack();
-      }
-      return;
-    }
-
-    if (showAgentPromptInput) {
-      if (key.escape) {
-        if (agentPrompt) setAgentPrompt('');
-        else setSelectedAgentId(null);
-      }
-      return;
-    }
-
-    if (showChatInput) {
-      if (key.escape) {
-        if (chatMessage) setChatMessage('');
+        if (draft) setDraft('');
         else onBack();
       }
       return;
     }
 
     if (key.escape) {
+      if (selectedAgentId) {
+        setSelectedAgentId(null);
+        return;
+      }
       onBack();
       return;
     }
     if (busy) return;
-    if (input === 'a' && run.phase === 'definition') {
-      void approve();
-    } else if (input === 'x' && run.phase === 'implementation') {
+    if (input === 'x' && run.phase === 'implementation') {
       void abort();
     }
   });
 
   const commandHints: CommandHint[] = openTask
     ? [
-        {
-          key: 'Esc',
-          label: showTaskConsoleInput && taskConsolePrompt ? 'clear message' : 'back to diagram',
-        },
-        ...(showTaskConsoleInput
-          ? []
-          : [{ key: 'c', label: taskConsoleExpanded ? 'show task definition' : 'expand console' }]),
+        { key: 'Esc', label: 'back to diagram' },
+        { key: 'c', label: taskConsoleExpanded ? 'show task definition' : 'expand console' },
       ]
-    : [
-        { key: 'Tab', label: 'switch tab' },
-        { key: 'Esc', label: 'back' },
-      ];
+    : commandSuggestions.length > 0
+      ? [
+          { key: '↑/↓', label: 'select command' },
+          { key: 'Tab', label: 'complete command' },
+          { key: 'Esc', label: 'back' },
+        ]
+      : [
+          { key: 'Tab', label: 'switch tab' },
+          { key: 'Esc', label: 'back' },
+        ];
   if (!openTask) {
-    if (run.phase === 'definition')
-      commandHints.push(
-        tab === 'planification'
-          ? { key: '/approve · /abort', label: 'plan actions' }
-          : { key: 'a', label: 'approve' },
-      );
+    if (run.phase === 'definition') {
+      commandHints.push({ key: '/approve · /abort', label: 'plan actions' });
+    }
     if (run.phase === 'implementation') commandHints.push({ key: 'x', label: 'abort' });
-    if (tab === 'overview' && tasks.length > 0) {
+    if (!conversationMode && tab === 'overview' && tasks.length > 0) {
       commandHints.push({ key: 's', label: taskSelectMode ? 'exit task select' : 'select task' });
       if (taskSelectMode) {
         commandHints.push(
@@ -781,7 +914,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
         );
       }
     }
-    if (tab === 'console' && !showAgentPromptInput && agents.length > 0) {
+    if (!conversationMode && tab === 'console' && agents.length > 0) {
       commandHints.push({
         key: 's',
         label: agentSelectMode ? 'exit agent select' : 'select agent',
@@ -794,10 +927,17 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       }
     }
   }
-  const arrowsSelectTasks = !openTask && tab === 'overview' && taskSelectMode && tasks.length > 0;
+  const arrowsSelectTasks =
+    !openTask && !conversationMode && tab === 'overview' && taskSelectMode && tasks.length > 0;
   const arrowsSelectAgents =
-    !showAgentPromptInput && tab === 'console' && agentSelectMode && agents.length > 0;
-  if (scrollMetrics.contentHeight > scrollMetrics.viewportHeight) {
+    !conversationMode && tab === 'console' && agentSelectMode && agents.length > 0;
+  // While the command dropdown is up, ↑/↓ navigate it (see the useInput handler above) rather
+  // than scroll — a "scroll" hint bound to the same keys at the same time would be misleading,
+  // and would also collide with the dropdown's own ↑/↓ hint above as a duplicate React key.
+  if (
+    commandSuggestions.length === 0 &&
+    scrollMetrics.contentHeight > scrollMetrics.viewportHeight
+  ) {
     const from = scrollOffset + 1;
     const to = Math.min(scrollMetrics.contentHeight, scrollOffset + scrollMetrics.viewportHeight);
     commandHints.push(
@@ -816,8 +956,10 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     width - HEADER_LABEL.length - tabBarWidth - HEADER_MARGIN - MIN_TITLE_GAP,
   );
   const title = truncateTitle(run.title, titleMaxWidth);
-  const { label: statusText, color: statusColor } = statusLabel(busy, waitingForArchitect);
-  const { label: chatStatusText, color: chatStatusColor } = statusLabel(busy, chatWaiting);
+  const { label: statusText, color: statusColor } = statusLabel(
+    busy,
+    conversationMode === 'chat' ? chatWaiting : waitingForArchitect,
+  );
 
   return (
     <Box flexDirection="column" width={width} marginTop={1}>
@@ -860,6 +1002,15 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
                 recommendation={grillingQuestion.recommendation}
                 width={width}
               />
+            ) : pendingConsultation ? (
+              <ConsultationPanel
+                taskId={pendingConsultation.taskId}
+                failureReason={pendingConsultation.failureReason}
+                question={pendingConsultation.question}
+                recommendation={pendingConsultation.recommendation}
+                extraCount={consultations.size - 1}
+                width={width}
+              />
             ) : (
               <PlanificationPanel
                 run={run}
@@ -882,6 +1033,15 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
             scrollOffset={scrollOffset}
             onScrollMetrics={reportScrollMetrics}
             selectedTaskId={taskSelectMode ? (selectedTask?.id ?? null) : null}
+          />
+        ) : tab === 'agents' ? (
+          <AgentsPanel
+            events={events}
+            eventTimestamps={eventTimestamps}
+            width={width}
+            height={bodyHeight}
+            scrollOffset={scrollOffset}
+            onScrollMetrics={reportScrollMetrics}
           />
         ) : tab === 'console' ? (
           <ConsolePanel
@@ -913,76 +1073,37 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
         )}
         <Box marginTop={1} justifyContent="space-between">
           <CommandHints hints={commandHints} />
-          {(showFeedbackInput ||
-            showGrillingInput ||
-            showAgentPromptInput ||
-            showTaskConsoleInput) && <Text color={statusColor}>{statusText}</Text>}
-          {showChatInput && (
-            <Text color={chatStatusColor}>{chatStatusText}</Text>
-          )}
+          {conversationMode && <Text color={statusColor}>{statusText}</Text>}
         </Box>
-        {showFeedbackInput && (
+        {conversationMode && (
           <Box marginTop={1}>
-            <FeedbackInput
-              feedback={feedback}
-              onFeedbackChange={setFeedback}
-              onSubmitFeedback={submitFeedback}
+            <ArchitectConversationInput
+              mode={conversationMode}
+              value={draft}
+              onChange={setDraft}
+              onSubmit={submitConversation}
               busy={busy}
               width={width}
             />
           </Box>
         )}
-        {showGrillingInput && (
-          <Box marginTop={1}>
-            <GrillingAnswerInput
-              value={grillingAnswer}
-              onChange={setGrillingAnswer}
-              onSubmit={submitGrillingAnswer}
-              busy={busy}
-              width={width}
-            />
-          </Box>
+        {conversationMode && commandSuggestions.length > 0 && (
+          <CommandSuggestions
+            commands={commandSuggestions}
+            selectedIndex={Math.min(suggestionIndex, commandSuggestions.length - 1)}
+          />
         )}
-        {showAgentPromptInput && (
+        {pendingConsultation && openTask && (
           <Box marginTop={1}>
-            <AgentPromptInput
-              value={agentPrompt}
-              onChange={setAgentPrompt}
-              onSubmit={submitAgentPrompt}
-              busy={busy}
-              width={width}
-            />
-          </Box>
-        )}
-        {showTaskConsoleInput && (
-          <Box marginTop={1}>
-            <AgentPromptInput
-              value={taskConsolePrompt}
-              onChange={setTaskConsolePrompt}
-              onSubmit={submitTaskConsolePrompt}
-              busy={busy}
-              width={width}
-            />
-          </Box>
-        )}
-        {showChatInput && (
-          <Box marginTop={1}>
-            <AgentPromptInput
-              value={chatMessage}
-              onChange={setChatMessage}
-              onSubmit={submitChat}
-              busy={busy || chatWaiting}
-              width={width}
-              placeholder="Ask the Architect anything…"
-            />
+            <Text color={WAITING}>The Architect is waiting for your reply — Esc to go back.</Text>
           </Box>
         )}
         {showBlockedMessage && (
           <Box marginTop={1}>
             <Text color={hasFailedTask ? ERROR : WAITING}>
               {hasFailedTask
-                ? 'Project blocked by a failed task — go to Console to fix it.'
-                : 'A task is waiting on you — go to Console to help it.'}
+                ? 'Project blocked by a failed task — the Architect will ask you what to do.'
+                : 'A task is waiting on you — see Overview.'}
             </Text>
           </Box>
         )}

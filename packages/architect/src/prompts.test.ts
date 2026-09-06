@@ -265,8 +265,19 @@ describe('buildChatPrompt', () => {
     },
   };
 
+  const tasksDirPath = '/home/user/.arch/projects/project-abc12345/runs/run-1/tasks';
+  const newTasksFilePath = '/home/user/.arch/projects/project-abc12345/runs/run-1/chat-new-tasks.json';
+  const nextTaskId = 'TASK-002';
+
   it('embeds the original request, the plan brief, and the human message when a plan exists', () => {
-    const prompt = buildChatPrompt({ run, plan, message: 'How is TASK-001 doing?' });
+    const prompt = buildChatPrompt({
+      run,
+      plan,
+      message: 'How is TASK-001 doing?',
+      tasksDirPath,
+      newTasksFilePath,
+      nextTaskId,
+    });
     expect(prompt).toContain('Add a function that sums two numbers');
     expect(prompt).toContain('# Add add(a, b)');
     expect(prompt).toContain('TASK-001 (done): Implement add()');
@@ -274,19 +285,70 @@ describe('buildChatPrompt', () => {
   });
 
   it('tells the Architect the project is still being defined when there is no plan yet', () => {
-    const prompt = buildChatPrompt({ run, plan: null, message: 'What are we building?' });
+    const prompt = buildChatPrompt({
+      run,
+      plan: null,
+      message: 'What are we building?',
+      tasksDirPath,
+      newTasksFilePath,
+      nextTaskId,
+    });
     expect(prompt).toContain('still being defined');
     expect(prompt).not.toContain('Current tasks');
   });
 
-  it('instructs the Architect not to edit files and to reply with no sentinel', () => {
-    const prompt = buildChatPrompt({ run, plan: null, message: 'hi' });
-    expect(prompt).toContain('must NOT edit, create, or delete any file');
-    expect(prompt).toContain('do not end your message with any special sentinel line');
+  it('instructs the Architect it cannot edit source files and to reply with no sentinel', () => {
+    const prompt = buildChatPrompt({
+      run,
+      plan: null,
+      message: 'hi',
+      tasksDirPath,
+      newTasksFilePath,
+      nextTaskId,
+    });
+    expect(prompt).toContain('must NOT edit any source file yourself');
+    expect(prompt).toContain('Do not end your message with any special sentinel line');
+  });
+
+  it('tells the Architect there is nothing to add tasks to when there is no plan yet', () => {
+    const prompt = buildChatPrompt({
+      run,
+      plan: null,
+      message: 'Add a subtract() function too',
+      tasksDirPath,
+      newTasksFilePath,
+      nextTaskId,
+    });
+    expect(prompt).toContain('there is nothing to add tasks to');
+    expect(prompt).not.toContain(newTasksFilePath);
+  });
+
+  it('tells the Architect to add new tasks to this same run by writing the given paths, only for real work', () => {
+    const prompt = buildChatPrompt({
+      run,
+      plan,
+      message: 'Add a subtract() function too',
+      tasksDirPath,
+      newTasksFilePath,
+      nextTaskId,
+    });
+    expect(prompt).toContain(tasksDirPath);
+    expect(prompt).toContain(newTasksFilePath);
+    expect(prompt).toContain(nextTaskId);
+    expect(prompt).toContain('{"tasks": [...]}');
+    expect(prompt).toContain('to this same run yourself');
+    expect(prompt).toContain('Never redefine, rewrite, or duplicate an existing task');
   });
 
   it('never mentions the unrelated dispatch markers other prompt kinds key off of', () => {
-    const prompt = buildChatPrompt({ run, plan, message: 'hi' });
+    const prompt = buildChatPrompt({
+      run,
+      plan,
+      message: 'hi',
+      tasksDirPath,
+      newTasksFilePath,
+      nextTaskId,
+    });
     expect(prompt).not.toContain('GRILLING_DONE');
     expect(prompt).not.toContain('Definition phase');
     expect(prompt).not.toContain('semantic review');

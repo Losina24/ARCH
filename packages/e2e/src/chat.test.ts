@@ -164,4 +164,125 @@ describe('chatting with the Architect', () => {
     if (event.type !== 'agent:message') throw new Error('unreachable');
     expect(event.text).toBe('Everything finished successfully.');
   });
+
+  function waitForNewTasksAnnouncement() {
+    return waitForEvent(
+      daemon.client,
+      (event) =>
+        event.type === 'agent:message' &&
+        event.role === 'architect' &&
+        !event.taskId &&
+        event.text.startsWith('Added '),
+      15000,
+    );
+  }
+
+  it('adds a task to this same run when a chat message during implementation asks for real project work', async () => {
+    runtime?.queuePlan({ projectMarkdown: '# Brief', tasks: [{ id: 'TASK-001', title: 'Do work' }] });
+
+    let releaseWorker: () => void = () => {};
+    const workerGate = new Promise<void>((resolve) => {
+      releaseWorker = resolve;
+    });
+    runtime?.queueWorker('TASK-001', async () => {
+      await workerGate;
+    });
+    runtime?.queueReview('TASK-001', 'approve');
+    runtime?.queueWorker('TASK-002', async () => {});
+    runtime?.queueReview('TASK-002', 'approve');
+    runtime?.queueChatNewTasks(
+      [{ id: 'TASK-002', title: 'Add subtract(a, b)' }],
+      "Sure, I've added a task for that.",
+    );
+
+    try {
+      const taskInProgress = waitForEvent(
+        daemon.client,
+        (event) =>
+          event.type === 'task:status-changed' &&
+          event.taskId === 'TASK-001' &&
+          event.status === 'in_progress',
+        15000,
+      );
+      const run = await createAndApprove('Do some work');
+      await taskInProgress;
+
+      const announcement = waitForNewTasksAnnouncement();
+      const newTaskDone = waitForEvent(
+        daemon.client,
+        (event) =>
+          event.type === 'task:status-changed' &&
+          event.taskId === 'TASK-002' &&
+          event.status === 'done',
+        15000,
+      );
+      await daemon.client.chatWithArchitect({
+        runId: run.runId,
+        message: 'Also add a subtract function please',
+      });
+      const announced = await announcement;
+      if (announced.type !== 'agent:message') throw new Error('unreachable');
+      expect(announced.text).toContain('TASK-002');
+      await newTaskDone;
+
+      // Still the same one run — no new run should ever have been created for this.
+      expect(await daemon.client.listRuns()).toHaveLength(1);
+      const plan = await daemon.client.getRunPlan({ runId: run.runId });
+      expect(plan?.tasksIndex.tasks.map((task) => task.id)).toEqual(['TASK-001', 'TASK-002']);
+    } finally {
+      releaseWorker();
+    }
+    await waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+  });
+
+  it('adds a task and reactivates this same run when a one-shot chat message (run already done) asks for real project work', async () => {
+    runtime?.queuePlan({ projectMarkdown: '# Brief', tasks: [{ id: 'TASK-001', title: 'Do work' }] });
+    runtime?.queueWorker('TASK-001', async ({ cwd }) => {
+      await writeFile(join(cwd, 'marker.txt'), 'ok', 'utf-8');
+    });
+    runtime?.queueReview('TASK-001', 'approve');
+    runtime?.queueWorker('TASK-002', async () => {});
+    runtime?.queueReview('TASK-002', 'approve');
+    runtime?.queueChatNewTasks(
+      [{ id: 'TASK-002', title: 'Add a health-check endpoint' }],
+      'Done — added a task for that.',
+    );
+
+    const run = await createAndApprove('Write a marker file');
+    await waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+
+    const announcement = waitForNewTasksAnnouncement();
+    const reactivated = waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'implementation',
+      15000,
+    );
+    await daemon.client.chatWithArchitect({
+      runId: run.runId,
+      message: 'Can you add a health-check endpoint?',
+    });
+    await announcement;
+    await reactivated;
+
+    await waitForEvent(
+      daemon.client,
+      (event) => event.type === 'run:status-changed' && event.phase === 'done',
+      15000,
+    );
+
+    expect(await daemon.client.listRuns()).toHaveLength(1);
+    const plan = await daemon.client.getRunPlan({ runId: run.runId });
+    expect(plan?.tasksIndex.tasks.map((task) => ({ id: task.id, status: task.status }))).toEqual([
+      { id: 'TASK-001', status: 'done' },
+      { id: 'TASK-002', status: 'done' },
+    ]);
+  });
 });

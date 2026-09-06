@@ -1,5 +1,6 @@
 import type { ArchMeshEvent } from '@losina/ipc';
 import { Box } from 'ink';
+import { memo } from 'react';
 import { AgentTranscript } from '../components/agent-transcript.js';
 import { GradientText } from '../components/gradient-text.js';
 import { ScrollBox, type ScrollMetrics } from '../components/scroll-box.js';
@@ -19,8 +20,14 @@ interface ChatPanelProps {
  * one chronological feed — in practice "Console pre-filtered to the Architect, always available,
  * with a text box permanently on top" (see architect-chat-tab's plan). Reuses AgentTranscript as-is;
  * there is no chat-specific rendering here beyond wrapping it in a tail-following ScrollBox.
+ *
+ * Memoized: this tab has a text input permanently active above it, so its parent (RunDetailView)
+ * re-renders on every keystroke. None of this panel's own props change just from typing, so
+ * skipping its re-render (and the AgentTranscript rescan inside it) is what actually keeps typing
+ * responsive as a run's event history grows — see run-detail-view.tsx's own reportScrollMetrics
+ * comment for the matching half of this (a stable onScrollMetrics is what makes this memo work).
  */
-export function ChatPanel({
+export const ChatPanel = memo(function ChatPanel({
   events,
   eventTimestamps,
   architectAgentId,
@@ -54,4 +61,4 @@ export function ChatPanel({
       </Box>
     </Box>
   );
-}
+});

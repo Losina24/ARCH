@@ -5,6 +5,7 @@ import {
   RunEventBus,
   getReadyTaskIds,
   loadTasksIndex,
+  mergeNewTasks,
   saveTasksIndex,
   selectDispatchableTaskIds,
 } from '@losina/core';
@@ -109,11 +110,27 @@ export async function runImplementationPhase(params: ImplementationPhaseParams):
     }
   };
 
+  // Applies tasks a chat turn (see architect-loop.ts's 'chat' branch) decided to add to this
+  // run's own plan. Same reasoning as applyQueuedRetries above: this loop already holds
+  // `tasksIndex` in memory, so a new task is pushed onto that same object here rather than
+  // written straight to disk from outside, which would race this loop's own periodic saves.
+  const applyQueuedNewTasks = async (): Promise<void> => {
+    const queued = runManager.drainNewTasks(runId);
+    if (queued.length === 0) return;
+
+    mergeNewTasks(tasksIndex, queued);
+    await saveTasksIndex(tasksIndexPath, tasksIndex);
+    for (const spec of queued) {
+      bus.emit({ type: 'task:status-changed', runId, taskId: spec.id, status: 'pending' });
+    }
+  };
+
   try {
     while (true) {
       if (signal.aborted) throw new RunAbortedError(runId);
 
       await applyQueuedRetries();
+      await applyQueuedNewTasks();
 
       const cascaded = cascadeBlockDependentTasks(tasksIndex.tasks);
       if (cascaded.length > 0) {

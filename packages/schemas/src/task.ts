@@ -41,3 +41,25 @@ export const TasksIndexSchema = z.object({
 });
 
 export type TasksIndex = z.infer<typeof TasksIndexSchema>;
+
+/**
+ * What the Architect actually decides when it adds a task to an already-approved plan (e.g. from
+ * a chat turn that calls for real work) — everything about a task except its runtime state, which
+ * is always the same for a brand-new task (see `mergeNewTasks` in @losina/core).
+ */
+export const NewTaskSpecSchema = TaskSchema.omit({
+  status: true,
+  correctionFiles: true,
+  retries: true,
+  failureReason: true,
+}).extend({
+  dependsOn: z.array(z.string()).default([]),
+});
+
+export type NewTaskSpec = z.infer<typeof NewTaskSpecSchema>;
+
+export const ChatNewTasksSchema = z.object({
+  tasks: z.array(NewTaskSpecSchema),
+});
+
+export type ChatNewTasks = z.infer<typeof ChatNewTasksSchema>;

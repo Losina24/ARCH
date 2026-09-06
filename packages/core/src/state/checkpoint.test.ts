@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TasksIndex } from '@losina/schemas';
+import type { NewTaskSpec, TasksIndex } from '@losina/schemas';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadTasksIndex, saveTasksIndex } from './checkpoint.js';
+import { loadTasksIndex, mergeNewTasks, saveTasksIndex } from './checkpoint.js';
 
 describe('loadTasksIndex / saveTasksIndex', () => {
   let dir: string;
@@ -48,5 +48,56 @@ describe('loadTasksIndex / saveTasksIndex', () => {
     await expect(loadTasksIndex(join(dir, 'missing.yaml'))).rejects.toMatchObject({
       code: 'ENOENT',
     });
+  });
+});
+
+describe('mergeNewTasks', () => {
+  const existingTask: TasksIndex['tasks'][number] = {
+    id: 'TASK-001',
+    title: 'Add add(a, b)',
+    status: 'done',
+    dependsOn: [],
+    file: 'tasks/TASK-001.md',
+    correctionFiles: [],
+    retries: 0,
+    checks: [],
+    scope: [],
+  };
+
+  const newTask: NewTaskSpec = {
+    id: 'TASK-002',
+    title: 'Add subtract(a, b)',
+    dependsOn: ['TASK-001'],
+    file: 'tasks/TASK-002.md',
+    checks: [],
+    scope: [],
+  };
+
+  it('appends a new task starting pending, with no corrections or retries yet', () => {
+    const tasksIndex: TasksIndex = { tasks: [existingTask] };
+
+    mergeNewTasks(tasksIndex, [newTask]);
+
+    expect(tasksIndex.tasks).toEqual([
+      existingTask,
+      { ...newTask, status: 'pending', correctionFiles: [], retries: 0 },
+    ]);
+  });
+
+  it('leaves every existing task untouched', () => {
+    const tasksIndex: TasksIndex = { tasks: [existingTask] };
+
+    mergeNewTasks(tasksIndex, [newTask]);
+
+    expect(tasksIndex.tasks[0]).toEqual(existingTask);
+  });
+
+  it('rejects a new task whose id already exists, without adding anything', () => {
+    const tasksIndex: TasksIndex = { tasks: [existingTask] };
+
+    expect(() => mergeNewTasks(tasksIndex, [{ ...newTask, id: 'TASK-001' }])).toThrow(
+      'Task id already exists: TASK-001',
+    );
+    expect(tasksIndex.tasks).toEqual([existingTask]);
   });
 });

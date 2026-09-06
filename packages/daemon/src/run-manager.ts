@@ -1,5 +1,5 @@
 import type { RunEventBus } from '@losina/core';
-import type { RunMeta } from '@losina/schemas';
+import type { NewTaskSpec, RunMeta } from '@losina/schemas';
 
 export interface QueuedRetry {
   taskId: string;
@@ -10,6 +10,10 @@ export class RunManager {
   private readonly runs = new Map<string, RunMeta>();
   private readonly abortControllers = new Map<string, AbortController>();
   private readonly pendingRetries = new Map<string, QueuedRetry[]>();
+  // Tasks a chat turn decided to add to an already-live run's plan — the implementation loop
+  // applies them to its own in-memory tasks-index on its next tick, same reasoning as
+  // pendingRetries above: mutating the loop's copy directly here would race its own periodic saves.
+  private readonly pendingNewTasks = new Map<string, NewTaskSpec[]>();
   // In-memory only, keyed by runId then taskId — exists purely so a human's retryTask reply can
   // be broadcast as a properly-seq'd consultation:answered event. Lost on daemon restart, which
   // is fine: the TUI's own clearing rule for a pending consultation is driven by task status
@@ -99,6 +103,21 @@ export class RunManager {
     return queue;
   }
 
+  /** Queues new tasks a chat turn added to this run's plan while its implementation loop is
+   * still live — see pendingNewTasks above. */
+  queueNewTasks(runId: string, tasks: NewTaskSpec[]): void {
+    const queue = this.pendingNewTasks.get(runId) ?? [];
+    queue.push(...tasks);
+    this.pendingNewTasks.set(runId, queue);
+  }
+
+  /** Removes and returns every new task queued for this run so far. */
+  drainNewTasks(runId: string): NewTaskSpec[] {
+    const queue = this.pendingNewTasks.get(runId) ?? [];
+    this.pendingNewTasks.delete(runId);
+    return queue;
+  }
+
   /** Records that a task's consultation question is pending, so a later reply gets its seq. */
   setPendingConsultation(runId: string, taskId: string, seq: number): void {
     const forRun = this.pendingConsultations.get(runId) ?? new Map<string, number>();
@@ -118,6 +137,7 @@ export class RunManager {
     this.runs.delete(runId);
     this.abortControllers.delete(runId);
     this.pendingRetries.delete(runId);
+    this.pendingNewTasks.delete(runId);
     this.pendingConsultations.delete(runId);
     this.eventBuses.delete(runId);
   }

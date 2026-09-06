@@ -14,7 +14,7 @@ import type {
   ConsultationRequestedEvent,
   ReviewRequestedEvent,
 } from '@losina/ipc';
-import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
+import type { AgentMeshConfig, NewTaskSpec, RunMeta } from '@losina/schemas';
 import type { RunManager } from '../run-manager.js';
 import { activityFromProgress } from './agent-progress.js';
 import { RunAbortedError } from './run-aborted-error.js';
@@ -25,18 +25,14 @@ export interface ArchitectLoopParams {
   config: AgentMeshConfig;
   bus: RunEventBus;
   signal: AbortSignal;
-  /** Only needed for chat:requested's pendingChats bookkeeping — see RunManager.beginChat/endChat. */
+  /** Needed for chat:requested's pendingChats bookkeeping (RunManager.beginChat/endChat) and to
+   * queue any new tasks a chat turn adds to this run's own plan — see the 'chat' branch below. */
   runManager: RunManager;
 }
 
 export interface ArchitectLoopHandle {
   stop: () => Promise<void>;
 }
-
-type ArchitectJob =
-  | { kind: 'review'; event: ReviewRequestedEvent }
-  | { kind: 'consultation'; event: ConsultationRequestedEvent }
-  | { kind: 'chat'; event: ChatRequestedEvent };
 
 const ACTIVITY_FAILURE_DETAIL_MAX_CHARS = 500;
 
@@ -56,15 +52,33 @@ export function summarizeActivityFailure(error: unknown): string {
 }
 
 /**
+ * A deterministic note appended after a chat turn that added tasks to this run's own plan,
+ * independent of whatever the model itself said in its own reply — shared with main.ts's
+ * triggerChatPhase, the one-shot path for the same feature, so the announcement reads identically
+ * either way.
+ */
+export function formatNewTasksAnnouncement(newTasks: NewTaskSpec[]): string {
+  const list = newTasks.map((task) => `${task.id} (${task.title})`).join(', ');
+  const noun = newTasks.length === 1 ? 'task' : 'tasks';
+  return `Added ${newTasks.length} new ${noun} to this run: ${list} — dispatching now.`;
+}
+
+type ArchitectJob =
+  | { kind: 'review'; event: ReviewRequestedEvent }
+  | { kind: 'consultation'; event: ConsultationRequestedEvent }
+  | { kind: 'chat'; event: ChatRequestedEvent };
+
+/**
  * Sequentially drains review:requested, consultation:requested, and chat:requested events for
  * this run, resolving each into its matching completion (review/consultation emit their own
- * *:completed event; chat replies via a plain agent:message), keeping a single architect session
- * alive across every task review AND consultation in the run. Everything queues FIFO — no
- * priority-jumping a review or consultation in progress, including a chat message, since none of
- * them is blocking forward progress on other tasks.
+ * *:completed event; chat replies via a plain agent:message), keeping a single architect process
+ * alive across every task review, consultation, AND chat turn in the run. Everything queues FIFO
+ * — no priority-jumping a review or consultation in progress, including a chat message, since
+ * none of them is blocking forward progress on other tasks.
  *
- * Chat deliberately keeps its own `chatSessionId`, resumed independently from the
- * `architectSessionId` review/consultation share — see RunSessionsSchema.
+ * Review and consultation deliberately never resume a model session (see the comments on each
+ * call below); chat is the one exception, keeping its own `chatSessionId` resumed on every turn
+ * — see RunSessionsSchema.
  */
 export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHandle {
   const { run, runDir, config, bus, signal, runManager } = params;
@@ -91,7 +105,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
 
   const loop = (async () => {
     const initialSessions = await loadRunSessions(runDir);
-    let architectSessionId = initialSessions.architectSessionId;
     let chatSessionId = initialSessions.chatSessionId;
 
     while (!stopped) {
@@ -128,7 +141,12 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
             correctionFilePath: request.correctionFilePath,
             workerSummary: request.workerSummary,
             dependencyScopes: request.dependencyScopes,
-            resumeSessionId: architectSessionId,
+            // Deliberately never resumed — every review prompt already carries the task brief,
+            // every prior correction, and the current diff, so a fresh session has everything a
+            // resumed one would have, without a run-long conversation growing across every task's
+            // reviews (and consultations too, see the consultStuckTask call below — chat below
+            // that is the one exception, see this function's own doc comment).
+            resumeSessionId: undefined,
             signal,
             onProgress: (progress) =>
               bus.emit(
@@ -143,10 +161,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
                 ),
               ),
           });
-
-          architectSessionId = review.sessionId;
-          const latest = await loadRunSessions(runDir);
-          await saveRunSessions(runDir, { ...latest, architectSessionId });
 
           bus.emit({
             type: 'agent:activity',
@@ -231,7 +245,11 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
             maxRetries: request.maxRetries,
             model: request.model,
             consultationFilePath: request.consultationFilePath,
-            resumeSessionId: architectSessionId,
+            // Deliberately never resumed — see the matching comment on the Worker dispatch in
+            // tl-loop.ts and on the review call above. The consultation prompt already carries the
+            // task brief, every prior correction, the diff, and exactly why the deterministic rules
+            // gave up, so a fresh session has everything a resumed one would have.
+            resumeSessionId: undefined,
             signal,
             onProgress: (progress) =>
               bus.emit(
@@ -241,10 +259,6 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
                 ),
               ),
           });
-
-          architectSessionId = result.sessionId;
-          const latest = await loadRunSessions(runDir);
-          await saveRunSessions(runDir, { ...latest, architectSessionId });
 
           bus.emit({
             type: 'agent:activity',
@@ -315,13 +329,16 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
         const plan = await loadRunPlan(runDir);
         const result = await chatWithArchitect({
           run,
+          runDir,
           plan,
           message: next.event.message,
           model: config.models.architectModel,
           resumeSessionId: chatSessionId,
           signal,
           onProgress: (progress) =>
-            bus.emit(activityFromProgress({ runId, agentId: architectAgentId, role: 'architect' }, progress)),
+            bus.emit(
+              activityFromProgress({ runId, agentId: architectAgentId, role: 'architect' }, progress),
+            ),
         });
 
         chatSessionId = result.sessionId;
@@ -343,6 +360,20 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           role: 'architect',
           text: result.reply,
         });
+
+        if (result.newTasks?.length) {
+          // The loop's own tasks-index is only safe to mutate from inside its own iteration (see
+          // applyQueuedRetries in implementation-phase.ts for the exact same reasoning) — queue it
+          // there instead of touching disk directly from here.
+          runManager.queueNewTasks(runId, result.newTasks);
+          bus.emit({
+            type: 'agent:message',
+            runId,
+            agentId: architectAgentId,
+            role: 'architect',
+            text: formatNewTasksAnnouncement(result.newTasks),
+          });
+        }
       } catch (error) {
         if (error instanceof RunAbortedError) return;
         console.error(`[daemon] architect loop failed to process chat message for run ${runId}:`, error);

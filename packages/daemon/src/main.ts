@@ -8,6 +8,7 @@ import {
   loadRunPlan,
   loadRunSessions,
   loadTasksIndex,
+  mergeNewTasks,
   saveRunSessions,
   saveTasksIndex,
   workerAgentId,
@@ -30,6 +31,7 @@ import type {
   RunRetryTaskRequest,
 } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta, RunPlan } from '@losina/schemas';
+import { formatNewTasksAnnouncement } from './orchestrator/architect-loop.js';
 import { runDefinitionPhase } from './orchestrator/definition-phase.js';
 import { runGrillingPhase } from './orchestrator/grilling-phase.js';
 import { runImplementationPhase } from './orchestrator/implementation-phase.js';
@@ -369,6 +371,7 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
 
           const result = await chatWithArchitect({
             run,
+            runDir,
             plan,
             message,
             model: config.models.architectModel,
@@ -385,6 +388,43 @@ export async function startDaemon(cwd: string): Promise<DaemonServerHandle> {
             role: 'architect',
             text: result.reply,
           });
+
+          if (result.newTasks?.length) {
+            const tasksIndexPath = join(runDir, 'tasks-index.yaml');
+            const tasksIndex = await loadTasksIndex(tasksIndexPath);
+            mergeNewTasks(tasksIndex, result.newTasks);
+            await saveTasksIndex(tasksIndexPath, tasksIndex);
+            for (const spec of result.newTasks) {
+              handle.broadcast({
+                type: 'task:status-changed',
+                runId,
+                taskId: spec.id,
+                status: 'pending',
+              });
+            }
+
+            // No live implementation loop reaches this one-shot path in the first place (see the
+            // run.chat case below) — this run is always 'definition'/'grilling'/'blocked'/'done'
+            // here, and the prompt never offers the new-task option without a plan, so only
+            // 'blocked'/'done' actually need reactivating.
+            if (run.phase === 'blocked' || run.phase === 'done') {
+              const updated = runManager.update(runId, { phase: 'implementation' });
+              await persistRunMeta(archDir, updated);
+              handle.broadcast({ type: 'run:status-changed', runId, phase: 'implementation' });
+
+              const controller = new AbortController();
+              runManager.setAbortController(runId, controller);
+              triggerImplementationPhase(runId, controller.signal);
+            }
+
+            handle.broadcast({
+              type: 'agent:message',
+              runId,
+              agentId: id,
+              role: 'architect',
+              text: formatNewTasksAnnouncement(result.newTasks),
+            });
+          }
         } catch (error) {
           console.error(`[daemon] chat failed for run ${runId}:`, error);
           handle.broadcast({
