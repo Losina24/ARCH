@@ -21,6 +21,17 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// Ink's `useInput` subscribes to the fake stdin from a child component's effect, which commits
+// one macrotask after the tree's initial render — a single tick() only flushes synchronous work,
+// not that later effect. On a slow/contended CI runner, sending the first keystroke after just one
+// tick can race that subscription and get dropped (e.g. a typed "/runs" silently loses its leading
+// "/" and gets submitted as a plain prompt instead of a command). A second tick lets any
+// effect-scheduled work queued during the first one finish before we start typing.
+async function settle(): Promise<void> {
+  await tick();
+  await tick();
+}
+
 // vi.waitFor's own default timeout is 1000ms, which is tight enough that these
 // screen-transition assertions have failed intermittently on GitHub Actions' slower/more
 // contended runners even though they pass reliably (and fast) locally. Give them more room.
@@ -81,7 +92,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     const frame = lastFrame() ?? '';
     expect(frame).toContain('█');
     expect(frame).toContain('Describe your task and give instructions');
@@ -114,7 +125,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await waitFor(() => {
       expect(lastFrame()).toContain('Describe your task and give instructions');
     });
@@ -129,7 +140,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={onOpenRun} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, 'fix bug');
     await press(stdin, '\r');
 
@@ -143,7 +154,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/settings');
     await press(stdin, '\r');
 
@@ -160,7 +171,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/settings');
     await press(stdin, '\r');
     await waitFor(() => expect(lastFrame()).toContain('Settings'));
@@ -204,7 +215,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/r');
 
     const frame = lastFrame() ?? '';
@@ -218,7 +229,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/');
     // HOME_COMMANDS order: runs, settings, help, quit, close-all — two downs lands on "help".
     await press(stdin, '\x1b[B');
@@ -235,7 +246,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/');
     await press(stdin, '\x1b[B'); // highlight "settings"
     await press(stdin, '\t');
@@ -268,7 +279,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={onOpenRun} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/runs');
     await press(stdin, '\r');
 
@@ -296,7 +307,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/runs');
     await press(stdin, '\r');
     await waitFor(() => {
@@ -323,7 +334,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/runs');
     await press(stdin, '\r');
     // Both the runs screen and the splash-screen ActiveRunsBar can render "First run" (its phase
@@ -350,7 +361,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/runs');
     await press(stdin, '\r');
     await waitFor(() => {
@@ -377,7 +388,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/runs');
     await press(stdin, '\r');
     await waitFor(() => {
@@ -400,7 +411,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/runs');
     await press(stdin, '\r');
     await waitFor(() => expect(lastFrame()).toContain('No runs yet'));
@@ -429,7 +440,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/help');
     await press(stdin, '\r');
 
@@ -447,7 +458,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/help');
     await press(stdin, '\r');
     await waitFor(() => expect(lastFrame()).toContain('Help'));
@@ -463,7 +474,7 @@ describe('HomeView', () => {
       <HomeView client={client} cwd="/tmp/project" bootAnimationMs={0} onOpenRun={vi.fn()} />,
     );
 
-    await tick();
+    await settle();
     await type(stdin, '/nope');
     await press(stdin, '\r');
 
