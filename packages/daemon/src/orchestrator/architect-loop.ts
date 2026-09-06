@@ -1,14 +1,21 @@
-import { consultStuckTask, reviewTask } from '@losina/architect';
+import { chatWithArchitect, consultStuckTask, reviewTask } from '@losina/architect';
 import {
+  architectAgentId as buildArchitectAgentId,
   type RunEventBus,
   loadConsultationRequest,
   loadReviewRequest,
+  loadRunPlan,
   loadRunSessions,
   saveRunSessions,
   writeReviewResponse,
 } from '@losina/core';
-import type { ConsultationRequestedEvent, ReviewRequestedEvent } from '@losina/ipc';
+import type {
+  ChatRequestedEvent,
+  ConsultationRequestedEvent,
+  ReviewRequestedEvent,
+} from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta } from '@losina/schemas';
+import type { RunManager } from '../run-manager.js';
 import { activityFromProgress } from './agent-progress.js';
 import { RunAbortedError } from './run-aborted-error.js';
 
@@ -18,6 +25,8 @@ export interface ArchitectLoopParams {
   config: AgentMeshConfig;
   bus: RunEventBus;
   signal: AbortSignal;
+  /** Only needed for chat:requested's pendingChats bookkeeping — see RunManager.beginChat/endChat. */
+  runManager: RunManager;
 }
 
 export interface ArchitectLoopHandle {
@@ -26,7 +35,8 @@ export interface ArchitectLoopHandle {
 
 type ArchitectJob =
   | { kind: 'review'; event: ReviewRequestedEvent }
-  | { kind: 'consultation'; event: ConsultationRequestedEvent };
+  | { kind: 'consultation'; event: ConsultationRequestedEvent }
+  | { kind: 'chat'; event: ChatRequestedEvent };
 
 const ACTIVITY_FAILURE_DETAIL_MAX_CHARS = 500;
 
@@ -46,16 +56,20 @@ export function summarizeActivityFailure(error: unknown): string {
 }
 
 /**
- * Sequentially drains review:requested and consultation:requested events for this run, resolving
- * each into its matching *:completed event, keeping a single architect session alive across every
- * task review AND consultation in the run. A consultation queues FIFO behind whatever's already
- * ahead of it — no priority-jumping a review in progress — since it's about a task that's already
- * being finalized either way, not something blocking forward progress on other tasks.
+ * Sequentially drains review:requested, consultation:requested, and chat:requested events for
+ * this run, resolving each into its matching completion (review/consultation emit their own
+ * *:completed event; chat replies via a plain agent:message), keeping a single architect session
+ * alive across every task review AND consultation in the run. Everything queues FIFO — no
+ * priority-jumping a review or consultation in progress, including a chat message, since none of
+ * them is blocking forward progress on other tasks.
+ *
+ * Chat deliberately keeps its own `chatSessionId`, resumed independently from the
+ * `architectSessionId` review/consultation share — see RunSessionsSchema.
  */
 export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHandle {
-  const { run, runDir, config, bus, signal } = params;
+  const { run, runDir, config, bus, signal, runManager } = params;
   const runId = run.runId;
-  const architectAgentId = `architect-${runId}`;
+  const architectAgentId = buildArchitectAgentId(runId);
 
   const queue: ArchitectJob[] = [];
   let wake: (() => void) | undefined;
@@ -69,12 +83,16 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
     } else if (event.type === 'consultation:requested') {
       queue.push({ kind: 'consultation', event });
       wake?.();
+    } else if (event.type === 'chat:requested') {
+      queue.push({ kind: 'chat', event });
+      wake?.();
     }
   });
 
   const loop = (async () => {
     const initialSessions = await loadRunSessions(runDir);
     let architectSessionId = initialSessions.architectSessionId;
+    let chatSessionId = initialSessions.chatSessionId;
 
     while (!stopped) {
       if (signal.aborted) return;
@@ -109,6 +127,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
             model: request.model,
             correctionFilePath: request.correctionFilePath,
             workerSummary: request.workerSummary,
+            dependencyScopes: request.dependencyScopes,
             resumeSessionId: architectSessionId,
             signal,
             onProgress: (progress) =>
@@ -180,104 +199,170 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
             role: 'architect',
             taskId: next.event.taskId,
             state: 'failed',
+            detail: summarizeActivityFailure(error),
           });
         }
         continue;
       }
 
-      // next.kind === 'consultation'
-      try {
-        const request = await loadConsultationRequest(next.event.requestPath);
+      if (next.kind === 'consultation') {
+        try {
+          const request = await loadConsultationRequest(next.event.requestPath);
 
-        bus.emit({
-          type: 'agent:activity',
-          runId,
-          agentId: architectAgentId,
-          role: 'architect',
-          taskId: request.taskId,
-          state: 'thinking',
-        });
-
-        const result = await consultStuckTask({
-          run,
-          taskId: request.taskId,
-          taskMarkdown: request.taskMarkdown,
-          correctionMarkdowns: request.correctionMarkdowns,
-          gitDiff: request.gitDiff,
-          workerSummary: request.workerSummary,
-          failureReason: request.failureReason,
-          failureKind: request.failureKind,
-          retriesSpent: request.retriesSpent,
-          maxRetries: request.maxRetries,
-          model: request.model,
-          consultationFilePath: request.consultationFilePath,
-          dependencyScopes: request.dependencyScopes,
-          resumeSessionId: architectSessionId,
-          signal,
-          onProgress: (progress) =>
-            bus.emit(
-              activityFromProgress(
-                { runId, agentId: architectAgentId, role: 'architect', taskId: request.taskId },
-                progress,
-              ),
-            ),
-        });
-
-        architectSessionId = result.sessionId;
-        const latest = await loadRunSessions(runDir);
-        await saveRunSessions(runDir, { ...latest, architectSessionId });
-
-        bus.emit({
-          type: 'agent:activity',
-          runId,
-          agentId: architectAgentId,
-          role: 'architect',
-          taskId: request.taskId,
-          state: 'completed',
-        });
-
-        if (result.question) {
           bus.emit({
-            type: 'agent:message',
+            type: 'agent:activity',
             runId,
             agentId: architectAgentId,
             role: 'architect',
             taskId: request.taskId,
-            text: result.question,
+            state: 'thinking',
+          });
+
+          const result = await consultStuckTask({
+            run,
+            taskId: request.taskId,
+            taskMarkdown: request.taskMarkdown,
+            correctionMarkdowns: request.correctionMarkdowns,
+            gitDiff: request.gitDiff,
+            workerSummary: request.workerSummary,
+            failureReason: request.failureReason,
+            failureKind: request.failureKind,
+            retriesSpent: request.retriesSpent,
+            maxRetries: request.maxRetries,
+            model: request.model,
+            consultationFilePath: request.consultationFilePath,
+            resumeSessionId: architectSessionId,
+            signal,
+            onProgress: (progress) =>
+              bus.emit(
+                activityFromProgress(
+                  { runId, agentId: architectAgentId, role: 'architect', taskId: request.taskId },
+                  progress,
+                ),
+              ),
+          });
+
+          architectSessionId = result.sessionId;
+          const latest = await loadRunSessions(runDir);
+          await saveRunSessions(runDir, { ...latest, architectSessionId });
+
+          bus.emit({
+            type: 'agent:activity',
+            runId,
+            agentId: architectAgentId,
+            role: 'architect',
+            taskId: request.taskId,
+            state: 'completed',
+          });
+
+          if (result.question) {
+            bus.emit({
+              type: 'agent:message',
+              runId,
+              agentId: architectAgentId,
+              role: 'architect',
+              taskId: request.taskId,
+              text: result.question,
+            });
+          }
+
+          bus.emit({
+            type: 'consultation:completed',
+            runId,
+            taskId: request.taskId,
+            seq: next.event.seq,
+            question: result.question,
+            recommendation: result.recommendation,
+          });
+        } catch (error) {
+          if (error instanceof RunAbortedError) return;
+          console.error(
+            `[daemon] architect loop failed to process consultation for ${next.event.taskId}:`,
+            error,
+          );
+          bus.emit({
+            type: 'agent:activity',
+            runId,
+            agentId: architectAgentId,
+            role: 'architect',
+            taskId: next.event.taskId,
+            state: 'failed',
+            detail: summarizeActivityFailure(error),
+          });
+          // waitForConsultationOutcome never rejects — it needs this event even on failure so it
+          // doesn't hang until its own timeout for what's already a known-failed consultation.
+          bus.emit({
+            type: 'consultation:completed',
+            runId,
+            taskId: next.event.taskId,
+            seq: next.event.seq,
           });
         }
+        continue;
+      }
 
-        bus.emit({
-          type: 'consultation:completed',
-          runId,
-          taskId: request.taskId,
-          seq: next.event.seq,
-          question: result.question,
-          recommendation: result.recommendation,
-        });
-      } catch (error) {
-        if (error instanceof RunAbortedError) return;
-        console.error(
-          `[daemon] architect loop failed to process consultation for ${next.event.taskId}:`,
-          error,
-        );
+      // next.kind === 'chat'
+      runManager.beginChat();
+      try {
         bus.emit({
           type: 'agent:activity',
           runId,
           agentId: architectAgentId,
           role: 'architect',
-          taskId: next.event.taskId,
+          state: 'thinking',
+        });
+
+        const plan = await loadRunPlan(runDir);
+        const result = await chatWithArchitect({
+          run,
+          plan,
+          message: next.event.message,
+          model: config.models.architectModel,
+          resumeSessionId: chatSessionId,
+          signal,
+          onProgress: (progress) =>
+            bus.emit(activityFromProgress({ runId, agentId: architectAgentId, role: 'architect' }, progress)),
+        });
+
+        chatSessionId = result.sessionId;
+        const latest = await loadRunSessions(runDir);
+        await saveRunSessions(runDir, { ...latest, chatSessionId });
+
+        bus.emit({
+          type: 'agent:activity',
+          runId,
+          agentId: architectAgentId,
+          role: 'architect',
+          state: 'completed',
+        });
+
+        bus.emit({
+          type: 'agent:message',
+          runId,
+          agentId: architectAgentId,
+          role: 'architect',
+          text: result.reply,
+        });
+      } catch (error) {
+        if (error instanceof RunAbortedError) return;
+        console.error(`[daemon] architect loop failed to process chat message for run ${runId}:`, error);
+        bus.emit({
+          type: 'agent:activity',
+          runId,
+          agentId: architectAgentId,
+          role: 'architect',
           state: 'failed',
           detail: summarizeActivityFailure(error),
         });
-        // waitForConsultationOutcome never rejects — it needs this event even on failure so it
-        // doesn't hang until its own timeout for what's already a known-failed consultation.
         bus.emit({
-          type: 'consultation:completed',
+          type: 'agent:message',
           runId,
-          taskId: next.event.taskId,
-          seq: next.event.seq,
+          agentId: architectAgentId,
+          role: 'architect',
+          text: `Sorry, something went wrong answering that: ${summarizeActivityFailure(error)}`,
         });
+      } finally {
+        runManager.endChat();
       }
     }
   })();

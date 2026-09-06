@@ -138,6 +138,12 @@ export function buildActivityLog(
       return;
     }
 
+    if (event.type === 'chat:requested') {
+      // Internal handoff to the Architect loop — the human's own message is already logged via
+      // the human:prompt-sent branch above, and the reply arrives as an ordinary agent:message.
+      return;
+    }
+
     if (event.type === 'consultation:question-asked') {
       entries.push({
         id,

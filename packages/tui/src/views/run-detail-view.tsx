@@ -1,3 +1,4 @@
+import { architectAgentId } from '@losina/core';
 import type { ArchClient } from '@losina/daemon-client';
 import type { AgentActivityEvent, ArchMeshEvent } from '@losina/ipc';
 import type { AgentMeshConfig, RunMeta, RunPlan, Task } from '@losina/schemas';
@@ -12,6 +13,7 @@ import { StatusBar } from '../components/status-bar.js';
 import { useTerminalColumns } from '../hooks/use-terminal-columns.js';
 import { useTerminalRows } from '../hooks/use-terminal-rows.js';
 import { AgentPromptInput } from '../panels/agent-prompt-input.js';
+import { ChatPanel } from '../panels/chat-panel.js';
 import { ConsolePanel } from '../panels/console-panel.js';
 import { ExecutionPanel } from '../panels/execution-panel.js';
 import { FeedbackInput } from '../panels/feedback-input.js';
@@ -21,13 +23,14 @@ import { PlanificationPanel } from '../panels/planification-panel.js';
 import { TaskDetailPanel } from '../panels/task-detail-panel.js';
 import { ERROR, INACTIVE, MUTED, SUCCESS, WAITING, WARNING } from '../theme.js';
 
-const TABS = ['planification', 'overview', 'console'] as const;
+const TABS = ['planification', 'overview', 'console', 'chat'] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   planification: 'Overview',
   overview: 'Monitor',
   console: 'Console',
+  chat: 'Chat',
 };
 
 const HEADER_MARGIN = 6;
@@ -133,6 +136,11 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   const [agentPrompt, setAgentPrompt] = useState('');
   const [taskConsoleExpanded, setTaskConsoleExpanded] = useState(false);
   const [taskConsolePrompt, setTaskConsolePrompt] = useState('');
+  const [chatMessage, setChatMessage] = useState('');
+  // True from the moment run.chat's RPC resolves until the Architect's reply (an agent:message
+  // with no taskId — see the event handler below) actually arrives, since the reply is delivered
+  // asynchronously and isn't the RPC's own return value (same shape as `revising` for /refine).
+  const [chatWaiting, setChatWaiting] = useState(false);
 
   // The live subscription below has no history — a run that's already blocked/done by the time
   // this view mounts (e.g. navigating Home then back) will never emit another event, so `events`
@@ -239,6 +247,13 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
 
       if (event.type === 'grilling:answered') {
         setGrillingQuestion(null);
+      }
+
+      // Only chat's own reply is a taskless architect message (review/consultation messages
+      // always carry the taskId they're about) — this is what clears the "waiting" state,
+      // whether the reply is a genuine answer or the chat path's own failure message.
+      if (event.type === 'agent:message' && event.role === 'architect' && !event.taskId) {
+        setChatWaiting(false);
       }
     });
   }, [client, run.runId]);
@@ -465,10 +480,30 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
     await sendHumanPromptToTask(liveOpenTask, trimmed, () => setTaskConsolePrompt(''));
   };
 
+  const submitChat = async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || busy || chatWaiting) return;
+
+    setBusy(true);
+    try {
+      const updated = await client.chatWithArchitect({ runId: run.runId, message: trimmed });
+      setRun(updated);
+      setChatMessage('');
+      setChatWaiting(true);
+      setStatus('');
+    } catch (error) {
+      setStatus(`Failed to send: ${(error as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const showFeedbackInput = tab === 'planification' && run.phase === 'definition';
   const showGrillingInput =
     tab === 'planification' && run.phase === 'grilling' && grillingQuestion !== null;
   const showAgentPromptInput = tab === 'console' && selectedAgentId !== null;
+  const showChatInput = tab === 'chat';
+  const architectId = architectAgentId(run.runId);
   const showTaskConsoleInput =
     liveOpenTask !== null &&
     (liveOpenTask.status === 'failed' || liveOpenTask.status === 'awaiting_human');
@@ -515,7 +550,8 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       : tab;
   const shouldFollowScrollTail =
     (liveOpenTask !== null && taskConsoleExpanded) ||
-    (liveOpenTask === null && tab === 'console' && consoleDisplayedAgentId !== null);
+    (liveOpenTask === null && tab === 'console' && consoleDisplayedAgentId !== null) ||
+    (liveOpenTask === null && tab === 'chat');
 
   const reportScrollMetrics = (metrics: ScrollMetrics) => {
     const normalized = {
@@ -694,6 +730,14 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
       return;
     }
 
+    if (showChatInput) {
+      if (key.escape) {
+        if (chatMessage) setChatMessage('');
+        else onBack();
+      }
+      return;
+    }
+
     if (key.escape) {
       onBack();
       return;
@@ -773,6 +817,7 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
   );
   const title = truncateTitle(run.title, titleMaxWidth);
   const { label: statusText, color: statusColor } = statusLabel(busy, waitingForArchitect);
+  const { label: chatStatusText, color: chatStatusColor } = statusLabel(busy, chatWaiting);
 
   return (
     <Box flexDirection="column" width={width} marginTop={1}>
@@ -838,11 +883,21 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
             onScrollMetrics={reportScrollMetrics}
             selectedTaskId={taskSelectMode ? (selectedTask?.id ?? null) : null}
           />
-        ) : (
+        ) : tab === 'console' ? (
           <ConsolePanel
             events={events}
             eventTimestamps={eventTimestamps}
             selectedAgentId={consoleDisplayedAgentId}
+            width={width}
+            height={bodyHeight}
+            scrollOffset={scrollOffset}
+            onScrollMetrics={reportScrollMetrics}
+          />
+        ) : (
+          <ChatPanel
+            events={events}
+            eventTimestamps={eventTimestamps}
+            architectAgentId={architectId}
             width={width}
             height={bodyHeight}
             scrollOffset={scrollOffset}
@@ -862,6 +917,9 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
             showGrillingInput ||
             showAgentPromptInput ||
             showTaskConsoleInput) && <Text color={statusColor}>{statusText}</Text>}
+          {showChatInput && (
+            <Text color={chatStatusColor}>{chatStatusText}</Text>
+          )}
         </Box>
         {showFeedbackInput && (
           <Box marginTop={1}>
@@ -904,6 +962,18 @@ export function RunDetailView({ client, run: initialRun, onBack }: RunDetailView
               onSubmit={submitTaskConsolePrompt}
               busy={busy}
               width={width}
+            />
+          </Box>
+        )}
+        {showChatInput && (
+          <Box marginTop={1}>
+            <AgentPromptInput
+              value={chatMessage}
+              onChange={setChatMessage}
+              onSubmit={submitChat}
+              busy={busy || chatWaiting}
+              width={width}
+              placeholder="Ask the Architect anything…"
             />
           </Box>
         )}

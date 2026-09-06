@@ -70,7 +70,8 @@ export interface ReviewCompletedEvent {
 export interface HumanPromptSentEvent {
   type: 'human:prompt-sent';
   runId: string;
-  taskId: string;
+  /** Absent for a chat message — it isn't about any one task. */
+  taskId?: string;
   agentId: string;
   text: string;
 }
@@ -135,6 +136,17 @@ export interface ConsultationAnsweredEvent {
   skipped: boolean;
 }
 
+/**
+ * Internal: a human sent a chat message to the Architect while its loop is already alive
+ * (`implementation` phase) — pushed onto the run's live bus the same way review/consultation
+ * requests are, rather than going through `triggerChatPhase`'s one-shot path.
+ */
+export interface ChatRequestedEvent {
+  type: 'chat:requested';
+  runId: string;
+  message: string;
+}
+
 export type ArchMeshEvent =
   | RunStatusChangedEvent
   | TaskStatusChangedEvent
@@ -148,7 +160,8 @@ export type ArchMeshEvent =
   | ConsultationRequestedEvent
   | ConsultationCompletedEvent
   | ConsultationQuestionAskedEvent
-  | ConsultationAnsweredEvent;
+  | ConsultationAnsweredEvent
+  | ChatRequestedEvent;
 
 /** One event as durably persisted to a run's event log, paired with when it was broadcast. */
 export interface PersistedRunEvent {

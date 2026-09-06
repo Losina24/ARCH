@@ -5,6 +5,7 @@ export * from './graph/scope-lock.js';
 export * from './events/event-bus.js';
 export * from './state/checkpoint.js';
 export * from './state/session-store.js';
+export * from './state/run-plan.js';
 export * from './git/worktree-manager.js';
 export * from './git/diff.js';
 export * from './git/repo-root.js';

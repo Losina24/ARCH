@@ -1,6 +1,7 @@
-import type { RunMeta } from '@losina/schemas';
+import type { RunMeta, RunPlan } from '@losina/schemas';
 import { describe, expect, it } from 'vitest';
 import {
+  buildChatPrompt,
   buildConsultationPrompt,
   buildPlanPrompt,
   buildRefinePlanPrompt,
@@ -241,5 +242,54 @@ describe('buildConsultationPrompt', () => {
     expect(prompt).not.toContain('GRILLING_DONE');
     expect(prompt).not.toContain('Definition phase');
     expect(prompt).not.toContain('semantic review');
+  });
+});
+
+describe('buildChatPrompt', () => {
+  const plan: RunPlan = {
+    projectMarkdown: '# Add add(a, b)\n\nSum two numbers.',
+    tasksIndex: {
+      tasks: [
+        {
+          id: 'TASK-001',
+          title: 'Implement add()',
+          status: 'done',
+          dependsOn: [],
+          file: 'tasks/TASK-001.md',
+          correctionFiles: [],
+          retries: 0,
+          checks: [],
+          scope: [],
+        },
+      ],
+    },
+  };
+
+  it('embeds the original request, the plan brief, and the human message when a plan exists', () => {
+    const prompt = buildChatPrompt({ run, plan, message: 'How is TASK-001 doing?' });
+    expect(prompt).toContain('Add a function that sums two numbers');
+    expect(prompt).toContain('# Add add(a, b)');
+    expect(prompt).toContain('TASK-001 (done): Implement add()');
+    expect(prompt).toContain('How is TASK-001 doing?');
+  });
+
+  it('tells the Architect the project is still being defined when there is no plan yet', () => {
+    const prompt = buildChatPrompt({ run, plan: null, message: 'What are we building?' });
+    expect(prompt).toContain('still being defined');
+    expect(prompt).not.toContain('Current tasks');
+  });
+
+  it('instructs the Architect not to edit files and to reply with no sentinel', () => {
+    const prompt = buildChatPrompt({ run, plan: null, message: 'hi' });
+    expect(prompt).toContain('must NOT edit, create, or delete any file');
+    expect(prompt).toContain('do not end your message with any special sentinel line');
+  });
+
+  it('never mentions the unrelated dispatch markers other prompt kinds key off of', () => {
+    const prompt = buildChatPrompt({ run, plan, message: 'hi' });
+    expect(prompt).not.toContain('GRILLING_DONE');
+    expect(prompt).not.toContain('Definition phase');
+    expect(prompt).not.toContain('semantic review');
+    expect(prompt).not.toContain('CONSULTATION_READY');
   });
 });

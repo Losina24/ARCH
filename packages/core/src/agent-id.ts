@@ -2,3 +2,8 @@
 export function workerAgentId(taskId: string): string {
   return `worker-${taskId}`;
 }
+
+/** The Architect agent id for a given run — same rationale as workerAgentId above. */
+export function architectAgentId(runId: string): string {
+  return `architect-${runId}`;
+}

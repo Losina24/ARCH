@@ -7,6 +7,7 @@ interface AgentPromptInputProps {
   onSubmit: (value: string) => void;
   busy: boolean;
   width: number;
+  placeholder?: string;
 }
 
 export function AgentPromptInput({
@@ -15,6 +16,7 @@ export function AgentPromptInput({
   onSubmit,
   busy,
   width,
+  placeholder = 'Message this agent…',
 }: AgentPromptInputProps) {
   const focused = !busy;
 
@@ -24,7 +26,7 @@ export function AgentPromptInput({
         value={value}
         onChange={onChange}
         onSubmit={onSubmit}
-        placeholder="Message this agent…"
+        placeholder={placeholder}
         focus={focused}
       />
     </GradientBox>

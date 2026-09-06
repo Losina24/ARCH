@@ -1,3 +1,4 @@
+import type { RunEventBus } from '@losina/core';
 import type { RunMeta } from '@losina/schemas';
 
 export interface QueuedRetry {
@@ -14,6 +15,14 @@ export class RunManager {
   // is fine: the TUI's own clearing rule for a pending consultation is driven by task status
   // (see run-detail-view.tsx), not by this event, so nothing depends on it surviving a restart.
   private readonly pendingConsultations = new Map<string, Map<string, number>>();
+  // The implementation loop's bus is otherwise a local `const` unreachable from here — registered
+  // so `run.chat` can push a chat:requested event onto an already-live Architect loop instead of
+  // going through the one-shot triggerChatPhase path meant for phases with no live Architect.
+  private readonly eventBuses = new Map<string, RunEventBus>();
+  // Counts chat calls in flight (either path) so hasActiveWork() stays true while one is running —
+  // otherwise asking a `done`/`blocked` run something right as the daemon would otherwise go idle
+  // could have its reply cut off mid-flight by an idle shutdown.
+  private pendingChats = 0;
 
   list(): RunMeta[] {
     return [...this.runs.values()];
@@ -47,9 +56,29 @@ export class RunManager {
     this.abortControllers.delete(runId);
   }
 
-  /** True while any run has a live AbortController — the only reliable signal of in-process work. */
+  /** True while any run has a live AbortController, or a chat call is in flight. */
   hasActiveWork(): boolean {
-    return this.abortControllers.size > 0;
+    return this.abortControllers.size > 0 || this.pendingChats > 0;
+  }
+
+  setEventBus(runId: string, bus: RunEventBus): void {
+    this.eventBuses.set(runId, bus);
+  }
+
+  getEventBus(runId: string): RunEventBus | undefined {
+    return this.eventBuses.get(runId);
+  }
+
+  clearEventBus(runId: string): void {
+    this.eventBuses.delete(runId);
+  }
+
+  beginChat(): void {
+    this.pendingChats += 1;
+  }
+
+  endChat(): void {
+    this.pendingChats = Math.max(0, this.pendingChats - 1);
   }
 
   /**
@@ -90,5 +119,6 @@ export class RunManager {
     this.abortControllers.delete(runId);
     this.pendingRetries.delete(runId);
     this.pendingConsultations.delete(runId);
+    this.eventBuses.delete(runId);
   }
 }
