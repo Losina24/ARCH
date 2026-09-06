@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import { describeTransientDispatchFailure, isTransientDispatchError } from '@losina/agent-runtime';
 import {
   type RunEventBus,
+  abortMerge,
   commitAll,
   createWorktree,
   deleteBranch,
@@ -10,6 +11,7 @@ import {
   getCurrentBranch,
   getStagedDiff,
   getWorkingDiff,
+  hasConflictMarkers,
   installWorktreeDependencies,
   loadRunSessions,
   mergeDependencyBranches,
@@ -20,6 +22,7 @@ import {
   saveTasksIndex,
   scopesConflict,
   stagePaths,
+  syncWorktreeWithBase,
   workerAgentId,
   writeConsultationRequest,
   writeReviewRequest,
@@ -35,6 +38,7 @@ import type {
 import {
   type CorrectionSource,
   type DispatchWorkerInput,
+  buildMergeConflictCorrection,
   dispatchWorker,
   processWorkerReport,
 } from '@losina/tl';
@@ -77,6 +81,16 @@ const MAX_INFRA_CHECK_RETRIES = 3;
  * dispatch failure before validation or Architect review.
  */
 const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
+
+/**
+ * Cap on how many times the Worker gets re-dispatched to resolve a Git conflict that surfaces
+ * only once its work is already approved — merging the run's base branch into this task's own
+ * worktree can conflict with everything else that has landed on the base since this worktree
+ * branched. A budget separate from config.execution.maxRetries for the same reason
+ * MAX_INFRA_CHECK_RETRIES is: that budget is for correcting content the Architect or the checks
+ * rejected, not for recovering an integration step the Architect already approved.
+ */
+const MAX_INTEGRATION_CONFLICT_ROUNDS = 3;
 
 /**
  * IMPORTANT safety net: ARCH must never auto-commit onto the user's real, already-checked-out
@@ -361,6 +375,124 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
     }
   };
 
+  /**
+   * Integrates this task's already-approved worktree branch into repoRoot the way a human
+   * developer would: pull the latest base into their own branch first, resolve anything that
+   * conflicts there, then land the (now guaranteed fast-forward) merge for real. Only ever called
+   * once the Architect has approved the work and it's safe to auto-commit (see canAutoCommit at
+   * the call site) — the worktree's own `feat/<taskId>` branch already holds the approved commit
+   * before this runs.
+   *
+   * A conflict is confined entirely to the disposable worktree (syncWorktreeWithBase merges the
+   * base INTO it, never the other way around — see that function's own doc comment), so repoRoot
+   * itself is never at risk: mergeWorktree only ever runs once syncWorktreeWithBase has already
+   * confirmed there's nothing left to conflict on, making it a guaranteed fast-forward.
+   */
+  const integrateApprovedWork = async (
+    targetBranch: string,
+  ): Promise<{ merged: true } | { merged: false; message: string }> => {
+    if (!worktree)
+      throw new Error(`integrateApprovedWork called for ${task.id} without a worktree`);
+    let blocker: { markdown: string; source: CorrectionSource } | undefined;
+    let conflictedFiles: string[] = [];
+    let attempts = 0;
+
+    while (true) {
+      if (blocker) {
+        if (attempts >= MAX_INTEGRATION_CONFLICT_ROUNDS) {
+          await abortMerge(worktree.path);
+          return {
+            merged: false,
+            message: `Work was approved and committed on the isolated branch "${worktree.branch}" (${worktree.path}), but merging "${targetBranch}" into it produced Git conflicts that could not be resolved after ${MAX_INTEGRATION_CONFLICT_ROUNDS} attempts: ${conflictedFiles.join(', ')}. The branch has been preserved — resolve it by hand and retry this task when ready.`,
+          };
+        }
+        attempts += 1;
+        throwIfAborted();
+
+        bus.emit({
+          type: 'agent:activity',
+          runId,
+          agentId,
+          role: 'worker',
+          taskId: task.id,
+          state: 'thinking',
+        });
+        const dispatch = await dispatchWorkerWithTransientErrorRetry(task.id, {
+          task,
+          taskMarkdown,
+          worktree,
+          model: config.models.workerModel,
+          resumeSessionId: undefined,
+          correctionMarkdown: blocker.markdown,
+          correctionSource: blocker.source,
+          dependencies,
+          signal,
+          onProgress: (progress) =>
+            bus.emit(
+              activityFromProgress({ runId, agentId, role: 'worker', taskId: task.id }, progress),
+            ),
+        });
+        await mergeWorkerSession(runDir, task.id, dispatch.sessionId);
+        bus.emit({
+          type: 'agent:activity',
+          runId,
+          agentId,
+          role: 'worker',
+          taskId: task.id,
+          state: 'completed',
+        });
+        bus.emit({
+          type: 'agent:message',
+          runId,
+          agentId,
+          role: 'worker',
+          taskId: task.id,
+          text: dispatch.summary,
+        });
+        throwIfAborted();
+
+        if (blocker.source === 'conflict') {
+          // dispatchWorker stages every changed file after the Worker runs, which clears Git's
+          // own unmerged bit regardless of whether the markers inside were actually removed —
+          // check the file contents directly instead of asking Git again.
+          if (await hasConflictMarkers(worktree.path, conflictedFiles)) {
+            continue;
+          }
+          // Markers are gone: conclude the merge that syncWorktreeWithBase left in progress.
+          await commitAll(worktree.path, `${task.id}: merge ${targetBranch}`);
+        }
+
+        const validation = await processWorkerReport({
+          taskId: task.id,
+          worktreePath: worktree.path,
+          checks: task.checks,
+        });
+        if (!validation.passed) {
+          blocker = { markdown: buildCorrectionPrompt(validation), source: 'checks' };
+          continue;
+        }
+        blocker = undefined;
+        continue;
+      }
+
+      const unlockSync = await gitMutex.lock();
+      try {
+        const conflicted = await syncWorktreeWithBase(worktree, targetBranch);
+        if (!conflicted) {
+          await mergeWorktree(repoRoot, worktree);
+          return { merged: true };
+        }
+        conflictedFiles = conflicted;
+      } finally {
+        unlockSync();
+      }
+      blocker = {
+        markdown: buildMergeConflictCorrection(targetBranch, conflictedFiles),
+        source: 'conflict',
+      };
+    }
+  };
+
   try {
     if (config.execution.useWorktrees) {
       const unlockCreate = await gitMutex.lock();
@@ -593,18 +725,29 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
           // own `feat/<taskId>`, never the user's, regardless of what repoRoot is checked out to.
           await commitAll(worktree.path, `${task.id}: ${task.title}`);
           if (canAutoCommit) {
-            const unlockMerge = await gitMutex.lock();
-            try {
-              await mergeWorktree(repoRoot, worktree);
-            } finally {
-              unlockMerge();
+            const integration = await integrateApprovedWork(targetBranch);
+            if (integration.merged) {
+              // The code is merged and safe the moment mergeWorktree resolves — this task has
+              // succeeded regardless of what happens next. Worktree/branch removal is best-effort
+              // housekeeping from here on: a failure there must never flip an already-merged task
+              // back to 'failed', so it's deliberately outside this task's success/failure path.
+              await setStatus('done');
+              await cleanupWorktree();
+            } else {
+              // Deliberately not escalateToHuman: its cleanupWorktree would delete
+              // feat/<taskId>, the only place this task's already-approved work lives. The branch
+              // (and any state integrateApprovedWork left mid-merge in the worktree) is preserved
+              // exactly as-is for a human to pick up via retryTask.
+              await setStatus('awaiting_human', integration.message);
+              bus.emit({
+                type: 'agent:activity',
+                runId,
+                agentId,
+                role: 'worker',
+                taskId: task.id,
+                state: 'idle-waiting',
+              });
             }
-            // The code is merged and safe the moment mergeWorktree resolves — this task has
-            // succeeded regardless of what happens next. Worktree/branch removal is best-effort
-            // housekeeping from here on: a failure there must never flip an already-merged task
-            // back to 'failed', so it's deliberately outside this task's success/failure path.
-            await setStatus('done');
-            await cleanupWorktree();
           } else {
             await setStatus(
               'done',

@@ -16,8 +16,10 @@ export interface DependencyBrief {
  * - 'checks': ARCH ran this task's automated checks and they failed.
  * - 'scope': an automated scope check detected changes outside the task's declared scope.
  * - 'review': the Architect performed the semantic review and requested changes.
+ * - 'conflict': merging the project's base branch into this task's worktree produced Git
+ *   conflicts, after the Architect had already approved the task.
  */
-export type CorrectionSource = 'checks' | 'scope' | 'review';
+export type CorrectionSource = 'checks' | 'scope' | 'review' | 'conflict';
 
 const CORRECTION_INTRO: Record<CorrectionSource, string> = {
   checks:
@@ -25,7 +27,31 @@ const CORRECTION_INTRO: Record<CorrectionSource, string> = {
   scope:
     "An automated scope check found file changes outside this task's declared scope in your previous implementation.",
   review: 'The Architect reviewed your previous implementation of this task and requested changes.',
+  conflict:
+    "Your implementation of this task was approved, but merging the project's main branch into your working copy produced Git conflicts.",
 };
+
+/**
+ * Instructions for a correction round triggered by a merge conflict rather than a content
+ * problem — see the 'conflict' CorrectionSource above. Modeled on formatChecksBlock/
+ * formatDependenciesBlock: a plain, self-contained markdown block the Worker's own dispatch
+ * already knows how to slot in as `correctionMarkdown`.
+ */
+export function buildMergeConflictCorrection(
+  baseBranch: string,
+  conflictedFiles: string[],
+): string {
+  const list = conflictedFiles.map((file) => `- ${file}`).join('\n');
+  return `Merging "${baseBranch}" into your working copy left the following files with unresolved
+Git conflicts:
+${list}
+
+Resolve every conflict by hand: open each file, keep whatever must be kept from BOTH sides (your
+own work and what "${baseBranch}" already contains), and remove every \`<<<<<<<\`, \`=======\` and
+\`>>>>>>>\` marker. Do not discard either side's changes wholesale, and do not touch any file that
+isn't listed above. Do not run any \`git\` commands yourself — leave the merge itself to ARCH's
+orchestrator; just make sure the resulting file contents are correct and no markers remain.`;
+}
 
 /**
  * Surfaces the exact commands ARCH will run to validate this task — including the exact
