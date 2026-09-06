@@ -1,3 +1,4 @@
+import type { AgentProgressEvent } from '@losina/agent-runtime';
 import { consultStuckTask, reviewTask } from '@losina/architect';
 import {
   type RunEventBus,
@@ -43,6 +44,93 @@ export function summarizeActivityFailure(error: unknown): string {
     : message;
 }
 
+interface ArchitectJobContext {
+  runId: string;
+  bus: RunEventBus;
+  architectAgentId: string;
+}
+
+/** Common shape every Architect call (review or consultation) resolves to. */
+interface ArchitectJobResult {
+  sessionId: string;
+  /** Rendered as an `agent:message`, if present. */
+  message?: string;
+}
+
+/**
+ * Runs one Architect call (a review or a consultation) through the activity bookkeeping both
+ * share: emitting `thinking`/`completed` activity around it, forwarding provider progress, and
+ * surfacing `result.message` as an `agent:message`. `onSuccess` handles what's specific to the
+ * job kind (writing the response file, emitting the matching `*:completed` event); `onFailure`
+ * handles the kind-specific failure event(s), on top of the generic
+ * `agent:activity {state:'failed'}` this always emits. Rethrows `RunAbortedError` unchanged so
+ * the caller can stop the loop instead of logging it.
+ */
+async function runArchitectJob<TRequest, TResult extends ArchitectJobResult>(
+  context: ArchitectJobContext,
+  params: {
+    taskId: string;
+    requestPath: string;
+    resumeSessionId: string | undefined;
+    loadRequest: (path: string) => Promise<TRequest>;
+    execute: (
+      request: TRequest,
+      resumeSessionId: string | undefined,
+      onProgress: (progress: AgentProgressEvent) => void,
+    ) => Promise<TResult>;
+    onSuccess: (request: TRequest, result: TResult) => Promise<void>;
+    onFailure: (error: unknown) => void;
+  },
+): Promise<void> {
+  const { runId, bus, architectAgentId } = context;
+  const { taskId, requestPath, resumeSessionId, loadRequest, execute, onSuccess, onFailure } =
+    params;
+
+  try {
+    const request = await loadRequest(requestPath);
+
+    bus.emit({
+      type: 'agent:activity',
+      runId,
+      agentId: architectAgentId,
+      role: 'architect',
+      taskId,
+      state: 'thinking',
+    });
+
+    const result = await execute(request, resumeSessionId, (progress) =>
+      bus.emit(
+        activityFromProgress({ runId, agentId: architectAgentId, role: 'architect', taskId }, progress),
+      ),
+    );
+
+    bus.emit({
+      type: 'agent:activity',
+      runId,
+      agentId: architectAgentId,
+      role: 'architect',
+      taskId,
+      state: 'completed',
+    });
+
+    if (result.message) {
+      bus.emit({
+        type: 'agent:message',
+        runId,
+        agentId: architectAgentId,
+        role: 'architect',
+        taskId,
+        text: result.message,
+      });
+    }
+
+    await onSuccess(request, result);
+  } catch (error) {
+    if (error instanceof RunAbortedError) throw error;
+    onFailure(error);
+  }
+}
+
 /**
  * Sequentially drains review:requested and consultation:requested events for this run, resolving
  * each into its matching *:completed event, keeping a single architect session alive across every
@@ -54,6 +142,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
   const { run, runDir, config, bus, signal } = params;
   const runId = run.runId;
   const architectAgentId = `architect-${runId}`;
+  const jobContext: ArchitectJobContext = { runId, bus, architectAgentId };
 
   const queue: ArchitectJob[] = [];
   let wake: (() => void) | undefined;
@@ -70,131 +159,82 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
     }
   });
 
-  const loop = (async () => {
-    while (!stopped) {
-      if (signal.aborted) return;
-
-      const next = queue.shift();
-      if (!next) {
-        await new Promise<void>((resolve) => {
-          wake = resolve;
+  const runReviewJob = (event: ReviewRequestedEvent) =>
+    runArchitectJob(jobContext, {
+      taskId: event.taskId,
+      requestPath: event.requestPath,
+      // Deliberately never resumed — every review prompt already carries the task brief, every
+      // prior correction, and the current diff, so a fresh session has everything a resumed one
+      // would have, without a run-long conversation growing across every task's reviews (and
+      // consultations too, see runConsultationJob below).
+      resumeSessionId: undefined,
+      loadRequest: loadReviewRequest,
+      execute: async (request, sessionId, onProgress) => {
+        const review = await reviewTask({
+          run,
+          taskId: request.taskId,
+          taskMarkdown: request.taskMarkdown,
+          correctionMarkdowns: request.correctionMarkdowns,
+          gitDiff: request.gitDiff,
+          model: request.model,
+          correctionFilePath: request.correctionFilePath,
+          workerSummary: request.workerSummary,
+          dependencyScopes: request.dependencyScopes,
+          resumeSessionId: sessionId,
+          signal,
+          onProgress,
         });
-        continue;
-      }
+        return {
+          sessionId: review.sessionId,
+          message: review.verdict.approved
+            ? 'Approved — no corrections requested.'
+            : review.verdict.correctionMarkdown,
+          review,
+        };
+      },
+      onSuccess: async (request, { review }) => {
+        const responsePath = await writeReviewResponse(runDir, {
+          taskId: request.taskId,
+          seq: event.seq,
+          sessionId: review.sessionId,
+          approved: review.verdict.approved,
+          correctionMarkdown: review.verdict.approved ? undefined : review.verdict.correctionMarkdown,
+        });
 
-      if (next.kind === 'review') {
-        try {
-          const request = await loadReviewRequest(next.event.requestPath);
-
-          bus.emit({
-            type: 'agent:activity',
-            runId,
-            agentId: architectAgentId,
-            role: 'architect',
-            taskId: request.taskId,
-            state: 'thinking',
-          });
-
-          const review = await reviewTask({
-            run,
-            taskId: request.taskId,
-            taskMarkdown: request.taskMarkdown,
-            correctionMarkdowns: request.correctionMarkdowns,
-            gitDiff: request.gitDiff,
-            model: request.model,
-            correctionFilePath: request.correctionFilePath,
-            workerSummary: request.workerSummary,
-            dependencyScopes: request.dependencyScopes,
-            // Deliberately never resumed — every review prompt already carries the task brief,
-            // every prior correction, and the current diff, so a fresh session has everything a
-            // resumed one would have, without a run-long conversation growing across every task's
-            // reviews (and now consultations too, see the consultStuckTask call below).
-            resumeSessionId: undefined,
-            signal,
-            onProgress: (progress) =>
-              bus.emit(
-                activityFromProgress(
-                  {
-                    runId,
-                    agentId: architectAgentId,
-                    role: 'architect',
-                    taskId: request.taskId,
-                  },
-                  progress,
-                ),
-              ),
-          });
-
-          bus.emit({
-            type: 'agent:activity',
-            runId,
-            agentId: architectAgentId,
-            role: 'architect',
-            taskId: request.taskId,
-            state: 'completed',
-          });
-
-          bus.emit({
-            type: 'agent:message',
-            runId,
-            agentId: architectAgentId,
-            role: 'architect',
-            taskId: request.taskId,
-            text: review.verdict.approved
-              ? 'Approved — no corrections requested.'
-              : review.verdict.correctionMarkdown,
-          });
-
-          const responsePath = await writeReviewResponse(runDir, {
-            taskId: request.taskId,
-            seq: next.event.seq,
-            sessionId: review.sessionId,
-            approved: review.verdict.approved,
-            correctionMarkdown: review.verdict.approved
-              ? undefined
-              : review.verdict.correctionMarkdown,
-          });
-
-          bus.emit({
-            type: 'review:completed',
-            runId,
-            taskId: request.taskId,
-            seq: next.event.seq,
-            responsePath,
-            approved: review.verdict.approved,
-          });
-        } catch (error) {
-          if (error instanceof RunAbortedError) return;
-          console.error(
-            `[daemon] architect loop failed to process review for ${next.event.taskId}:`,
-            error,
-          );
-          bus.emit({
-            type: 'agent:activity',
-            runId,
-            agentId: architectAgentId,
-            role: 'architect',
-            taskId: next.event.taskId,
-            state: 'failed',
-            detail: summarizeActivityFailure(error),
-          });
-        }
-        continue;
-      }
-
-      // next.kind === 'consultation'
-      try {
-        const request = await loadConsultationRequest(next.event.requestPath);
-
+        bus.emit({
+          type: 'review:completed',
+          runId,
+          taskId: request.taskId,
+          seq: event.seq,
+          responsePath,
+          approved: review.verdict.approved,
+        });
+      },
+      onFailure: (error) => {
+        console.error(`[daemon] architect loop failed to process review for ${event.taskId}:`, error);
         bus.emit({
           type: 'agent:activity',
           runId,
           agentId: architectAgentId,
           role: 'architect',
-          taskId: request.taskId,
-          state: 'thinking',
+          taskId: event.taskId,
+          state: 'failed',
+          detail: summarizeActivityFailure(error),
         });
+      },
+    });
 
+  const runConsultationJob = (event: ConsultationRequestedEvent) =>
+    runArchitectJob(jobContext, {
+      taskId: event.taskId,
+      requestPath: event.requestPath,
+      // Deliberately never resumed — see the matching comment on runReviewJob above and on the
+      // Worker dispatch in tl-loop.ts. The consultation prompt already carries the task brief,
+      // every prior correction, the diff, and exactly why the deterministic rules gave up, so a
+      // fresh session has everything a resumed one would have.
+      resumeSessionId: undefined,
+      loadRequest: loadConsultationRequest,
+      execute: async (request, sessionId, onProgress) => {
         const result = await consultStuckTask({
           run,
           taskId: request.taskId,
@@ -208,53 +248,30 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           maxRetries: request.maxRetries,
           model: request.model,
           consultationFilePath: request.consultationFilePath,
-          // Deliberately never resumed — see the matching comment on the review call above and on
-          // the Worker dispatch in tl-loop.ts. The consultation prompt already carries the task
-          // brief, every prior correction, the diff, and exactly why the deterministic rules gave
-          // up, so a fresh session has everything a resumed one would have.
-          resumeSessionId: undefined,
+          resumeSessionId: sessionId,
           signal,
-          onProgress: (progress) =>
-            bus.emit(
-              activityFromProgress(
-                { runId, agentId: architectAgentId, role: 'architect', taskId: request.taskId },
-                progress,
-              ),
-            ),
+          onProgress,
         });
-
-        bus.emit({
-          type: 'agent:activity',
-          runId,
-          agentId: architectAgentId,
-          role: 'architect',
-          taskId: request.taskId,
-          state: 'completed',
-        });
-
-        if (result.question) {
-          bus.emit({
-            type: 'agent:message',
-            runId,
-            agentId: architectAgentId,
-            role: 'architect',
-            taskId: request.taskId,
-            text: result.question,
-          });
-        }
-
+        return {
+          sessionId: result.sessionId,
+          message: result.question,
+          question: result.question,
+          recommendation: result.recommendation,
+        };
+      },
+      onSuccess: async (request, { question, recommendation }) => {
         bus.emit({
           type: 'consultation:completed',
           runId,
           taskId: request.taskId,
-          seq: next.event.seq,
-          question: result.question,
-          recommendation: result.recommendation,
+          seq: event.seq,
+          question,
+          recommendation,
         });
-      } catch (error) {
-        if (error instanceof RunAbortedError) return;
+      },
+      onFailure: (error) => {
         console.error(
-          `[daemon] architect loop failed to process consultation for ${next.event.taskId}:`,
+          `[daemon] architect loop failed to process consultation for ${event.taskId}:`,
           error,
         );
         bus.emit({
@@ -262,7 +279,7 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
           runId,
           agentId: architectAgentId,
           role: 'architect',
-          taskId: next.event.taskId,
+          taskId: event.taskId,
           state: 'failed',
           detail: summarizeActivityFailure(error),
         });
@@ -271,9 +288,33 @@ export function startArchitectLoop(params: ArchitectLoopParams): ArchitectLoopHa
         bus.emit({
           type: 'consultation:completed',
           runId,
-          taskId: next.event.taskId,
-          seq: next.event.seq,
+          taskId: event.taskId,
+          seq: event.seq,
         });
+      },
+    });
+
+  const loop = (async () => {
+    while (!stopped) {
+      if (signal.aborted) return;
+
+      const next = queue.shift();
+      if (!next) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        continue;
+      }
+
+      try {
+        if (next.kind === 'review') {
+          await runReviewJob(next.event);
+        } else {
+          await runConsultationJob(next.event);
+        }
+      } catch (error) {
+        if (error instanceof RunAbortedError) return;
+        throw error;
       }
     }
   })();

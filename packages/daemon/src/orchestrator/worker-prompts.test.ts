@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkerPrompt } from './prompts.js';
+import { buildWorkerPrompt } from './worker-prompts.js';
 
 describe('buildWorkerPrompt', () => {
   it('embeds the task brief when there is no correction', () => {

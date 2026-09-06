@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Task, TasksIndex } from '@losina/schemas';
-import type { DependencyBrief } from '@losina/tl';
+import type { DependencyBrief } from './worker-prompts.js';
 
 const SUMMARY_MAX_CHARS = 1000;
 

@@ -33,23 +33,20 @@ import type {
   TasksIndex,
 } from '@losina/schemas';
 import {
-  type CorrectionSource,
-  type DispatchWorkerInput,
-  dispatchWorker,
-  processWorkerReport,
-} from '@losina/tl';
-import {
   buildCorrectionPrompt,
   isHumanInterventionNeeded,
   isInfraFailure,
 } from '@losina/validator';
 import { activityFromProgress } from './agent-progress.js';
 import { resolveDependencyBriefs } from './dependency-context.js';
+import { type DispatchWorkerInput, dispatchWorker } from './dispatch-worker.js';
 import type { Mutex } from './mutex.js';
+import { processWorkerReport } from './process-worker-report.js';
 import { RunAbortedError } from './run-aborted-error.js';
 import { resolveTaskRepoRoot } from './task-repo-root.js';
 import { waitForConsultationOutcome } from './wait-for-consultation-outcome.js';
 import { waitForReviewOutcome } from './wait-for-review-outcome.js';
+import type { CorrectionSource } from './worker-prompts.js';
 
 /**
  * Cap on how long a stuck-task consultation may keep the Architect busy before this task cycle
@@ -104,6 +101,18 @@ const PROTECTED_BRANCH = 'develop';
  */
 function otherScopedTasks(tasksIndex: TasksIndex, taskId: string): Task[] {
   return tasksIndex.tasks.filter((other) => other.id !== taskId && other.scope.length > 0);
+}
+
+/**
+ * Narrows `files` (a shared repo's dirty/changed files) down to the ones that actually belong to
+ * `taskId`, by excluding anything that falls inside another task's declared scope — see
+ * `otherScopedTasks` for why that other-task set is sourced from the full index rather than only
+ * in-flight tasks. Only meaningful without worktree isolation, where several tasks' files can
+ * land in the same working tree; with isolation every changed file already belongs to this task.
+ */
+function attributeFilesToTask(files: string[], tasksIndex: TasksIndex, taskId: string): string[] {
+  const others = otherScopedTasks(tasksIndex, taskId);
+  return files.filter((file) => !others.some((other) => scopesConflict([file], other.scope)));
 }
 
 async function dispatchWorkerWithTransientErrorRetry(
@@ -239,10 +248,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
   const revertOwnFiles = async (): Promise<void> => {
     if (!worktree || config.execution.useWorktrees) return;
     const changed = await getChangedFiles(worktree.path);
-    const others = otherScopedTasks(tasksIndex, task.id);
-    const files = changed.filter(
-      (file) => !others.some((other) => scopesConflict([file], other.scope)),
-    );
+    const files = attributeFilesToTask(changed, tasksIndex, task.id);
     if (files.length === 0) return;
     const unlockRevert = await gitMutex.lock();
     try {
@@ -438,10 +444,7 @@ export async function runTlTaskCycle(params: TlTaskCycleParams): Promise<void> {
       // ARCH deliberately left uncommitted, would look like a scope violation of this task.
       let ownFiles = dispatch.filesChanged;
       if (!config.execution.useWorktrees) {
-        const others = otherScopedTasks(tasksIndex, task.id);
-        ownFiles = dispatch.filesChanged.filter(
-          (file) => !others.some((other) => scopesConflict([file], other.scope)),
-        );
+        ownFiles = attributeFilesToTask(dispatch.filesChanged, tasksIndex, task.id);
       }
 
       if (!config.execution.useWorktrees && task.scope.length > 0) {

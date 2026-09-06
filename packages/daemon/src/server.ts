@@ -16,7 +16,15 @@ interface RpcEnvelope {
 }
 
 async function handleLine(socket: Socket, line: string, handleRequest: RequestHandler) {
-  const { id, method, payload } = JSON.parse(line) as RpcEnvelope;
+  let envelope: RpcEnvelope;
+  try {
+    envelope = JSON.parse(line) as RpcEnvelope;
+  } catch {
+    // No `id` to correlate a response with — there's nothing meaningful to write back. Drop the
+    // line rather than let a malformed one crash the daemon for every other connected client.
+    return;
+  }
+  const { id, method, payload } = envelope;
   try {
     const result = await handleRequest(method, payload);
     socket.write(`${JSON.stringify({ id, result })}\n`);
@@ -70,7 +78,10 @@ export async function startDaemonServer(
         const line = buffer.slice(0, newlineIndex);
         buffer = buffer.slice(newlineIndex + 1);
         if (line.trim()) {
-          void handleLine(socket, line, handleRequest);
+          // handleLine already catches both parse failures and handleRequest rejections, but
+          // guard the call itself too — a rejection escaping here would be an unhandled
+          // rejection that can crash the daemon for every other connected client.
+          handleLine(socket, line, handleRequest).catch(() => {});
         }
         newlineIndex = buffer.indexOf('\n');
       }
